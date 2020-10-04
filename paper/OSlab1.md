@@ -414,9 +414,71 @@ spin:
 
 我们需要在lab1中完成kdebug.c中函数print_stackframe的实现，可以通过函数print_stackframe了跟踪函数调用堆栈中记录的返回地址。
 
+在lab1/kern/debug目录下找到kdebug.c,打开以后发现源文件中已经有一个print_stackframe函数了(虽然里面啥也没有)，要做的就是往里面添加代码，让这个函数能实现我们需要的功能。以下是初始状态的代码。
 
+```c
+void print_stackframe(void) {
+     /* LAB1 YOUR CODE : STEP 1 */
+     /* (1) call read_ebp() to get the value of ebp. the type is (uint32_t);
+      * (2) call read_eip() to get the value of eip. the type is (uint32_t);
+      * (3) from 0 .. STACKFRAME_DEPTH
+      *    (3.1) printf value of ebp, eip
+      *    (3.2) (uint32_t)calling arguments [0..4] = the contents in address (uint32_t)ebp +2 [0..4]
+      *    (3.3) cprintf("\n");
+      *    (3.4) call print_debuginfo(eip-1) to print the C calling function name and line number, etc.
+      *    (3.5) popup a calling stackframe
+      *           NOTICE: the calling funciton's return addr eip  = ss:[ebp+4]
+      *                   the calling funciton's ebp = ss:[ebp]
+      */
+}
+```
 
+为了实现函数调用堆栈跟踪函数，需要先了解函数调用栈的原理。
 
+函数调用时，自栈顶(低地址)到栈底(高地址)的情况如下图所示
+
+![05.1.png](https://i.loli.net/2020/10/04/VJfMkbU4q6ClsKe.png)
+
+esp和ebp两个指针是其中最关键的部分，只要掌握了ebp和esp的位置，就能很容易理解函数调用过程了。根据这个图，我们可以有这样几个信息
+
+- ss[ebp]指向上一层的ebp
+- ss[ebp-4]指向局部变量
+- ss[ebp+4]指向返回地址
+- ss[ebp+4+4n]指向第n个参数
+
+之后我们就可以着手实现堆栈跟踪函数了。首先我们知道在bootasm.S中将esp设置为0x7c00，ebp设置为0，就调用了bootmain函数。call指令会依次执行以下命令:push返回地址，push这一层的ebp，然后把现在的esp赋值给ebp。在执行完call之后，这个ebp指向了0x7bf8(0x7c00-4-4)。
+
+实现之前我们看一下源代码中的注释，突然惊讶的发现注释已经非常贴心的教你怎么写了，那就按着这个注释一步一步来，写出如下的结果：
+
+```c
+void
+print_stackframe(void)
+{
+     /* LAB1 YOUR CODE : STEP 1 */
+     /* (1) call read_ebp() to get the value of ebp. the type is (uint32_t);
+      * (2) call read_eip() to get the value of eip. the type is (uint32_t);
+      * (3) from 0 .. STACKFRAME_DEPTH
+      *    (3.1) printf value of ebp, eip
+      *    (3.2) (uint32_t)calling arguments [0..4] = the contents in address (uint32_t)ebp +2 [0..4]
+      *    (3.3) cprintf("\n");
+      *    (3.4) call print_debuginfo(eip-1) to print the C calling function name and line number, etc.
+      *    (3.5) popup a calling stackframe
+      *           NOTICE: the calling funciton's return addr eip  = ss:[ebp+4]
+      *                   the calling funciton's ebp = ss:[ebp]
+      */
+	uint32_t ebp = read_ebp(), eip = read_eip();
+	for(int i = 0; ebp != 0 && i < STACKFRAME_DEPTH; i++){
+		cprintf("ebp=: 0x%08x | eip=: 0x%08x", ebp, eip);
+		uint32_t *args = (uint32_t *)ebp + 2;
+		for(int j = 0; j < 4; j++){
+			cprintf("args=: 0x%08x", args[j]);
+		}
+		cprintf("\n");
+		print_debuginfo(eip - 1);
+		eip = ((uint32_t *)ebp)[1];
+		ebp = ((uint32_t *)ebp)[0];
+}
+```
 
 ## 练习6：完善中断初始化和处理(需要编程)
 
