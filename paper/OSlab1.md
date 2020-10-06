@@ -468,16 +468,55 @@ print_stackframe(void)
       */
 	uint32_t ebp = read_ebp(), eip = read_eip();
 	for(int i = 0; ebp != 0 && i < STACKFRAME_DEPTH; i++){
-		cprintf("ebp=: 0x%08x | eip=: 0x%08x", ebp, eip);
+		cprintf("ebp=: 0x%08x | eip=: 0x%08x | args=: ", ebp, eip);
 		uint32_t *args = (uint32_t *)ebp + 2;
 		for(int j = 0; j < 4; j++){
-			cprintf("args=: 0x%08x", args[j]);
+			cprintf("0x%08x ", args[j]);
 		}
 		cprintf("\n");
 		print_debuginfo(eip - 1);
 		eip = ((uint32_t *)ebp)[1];
 		ebp = ((uint32_t *)ebp)[0];
+	}
 }
+```
+
+之后在lab1目录下执行命令 $ make qemu，得到如下的输出
+
+```
+......
+Kernel executable memory footprint: 64KB
+ebp=: 0x00007b28 | eip=: 0x00100a63 | args=: 0x00010094 0x00010094 0x00007b58 0x00100092 
+    kern/debug/kdebug.c:307: print_stackframe+21
+ebp=: 0x00007b38 | eip=: 0x00100d4d | args=: 0x00000000 0x00000000 0x00000000 0x00007ba8 
+    kern/debug/kmonitor.c:125: mon_backtrace+10
+ebp=: 0x00007b58 | eip=: 0x00100092 | args=: 0x00000000 0x00007b80 0xffff0000 0x00007b84 
+    kern/init/init.c:48: grade_backtrace2+33
+ebp=: 0x00007b78 | eip=: 0x001000bc | args=: 0x00000000 0xffff0000 0x00007ba4 0x00000029 
+    kern/init/init.c:53: grade_backtrace1+38
+ebp=: 0x00007b98 | eip=: 0x001000db | args=: 0x00000000 0x00100000 0xffff0000 0x0000001d 
+    kern/init/init.c:58: grade_backtrace0+23
+ebp=: 0x00007bb8 | eip=: 0x00100101 | args=: 0x001032dc 0x001032c0 0x0000130a 0x00000000 
+    kern/init/init.c:63: grade_backtrace+34
+ebp=: 0x00007be8 | eip=: 0x00100055 | args=: 0x00000000 0x00000000 0x00000000 0x00007c4f 
+    kern/init/init.c:28: kern_init+84
+ebp=: 0x00007bf8 | eip=: 0x00007d72 | args=: 0xc031fcfa 0xc08ed88e 0x64e4d08e 0xfa7502a8 
+    <unknow>: -- 0x00007d71 --
+......
+```
+
+最后一行中给出了ebp，eip和args三个参数，其具体意义为
+
+- **ebp=: 0x00007bf8** 是kern_init函数的栈顶地址，因为在先前的部分中我们知道整个栈的栈顶是0x7c00，ss[ebp]指向上一层的ebp，ss[ebp+4]指向返回地址，7bf8 + 0008 = 7c00，这意味着bootmain函数没有输入参数，只占用了旧ebp和返回地址一共8个字节
+- **eip=: 0x00007d72** 是kern_init函数的返回地址，也就是调用kern_init函数对应的指令的下一条指令的地址。
+- **args=: 0xc031fcfa 0xc08ed88e 0x64e4d08e 0xfa7502a8** 通常状态下，args存放的四个dword是对应4个输入参数的值。但是这里其实没有传递输入参数。不过因为此时的栈顶位置恰好在bootloader第一条指令存放的地址的上面，args是kern_init的ebp寄存器的栈顶往上的第二到第五个四字节，也就是说args其实是bootloader指令的前十六个字节，下面这个例子就能很好的说明情况
+
+```assembly
+	# bootloader前三条指令对应的机器码
+	7c00:	cli 				fa                   	
+    7c01:	cld 				fc   
+    7c02:	xor    %eax,%eax	31 c0
+    # 由于是小端字节序，所以存储为 c0 31 fc fa
 ```
 
 ## 练习6：完善中断初始化和处理(需要编程)
@@ -488,3 +527,16 @@ print_stackframe(void)
 2. 请编程完善/kern/trap/trap.c中对中断向量表进行初始化的函数idt_init。在idt_init函数中，依次对所有中断入口进行初始化。使用mmu.h中的SETGATE轰，填充idt数组内容。每个中断的入口由tools/vectors.c生成，使用trap.c中声明的vectors数组即可。
 3. 请编程完善trap.c中的中断处理函数trap,在对时钟中断进行处理的部分填写trap函数中处理时钟中断的部分，使操作系统每遇到100次时钟中断后，调用print_ticks子程序，向屏幕上打印一行文字”100 ticks“。
 
+
+
+
+
+## 扩展练习 Challenge1(需要编程)
+
+扩展proj4,增加syscall功能，即增加一用户态函数（可执行一特定系统调用：获得时钟计数值），当内核初始完毕后，可从内核态返回到用户态的函数，而用户态的函数又通过系统调用得到内核态的服务（通过网络查询所需信息，可找老师咨询。如果完成，且有兴趣做代替考试的实验，可找老师商量）。需写出详细的设计和分析报告。完成出色的可获得适当加分。
+
+
+
+## 扩展练习 Challenge2(需要编程)
+
+用键盘实现用户模式内核模式切换。具体目标是：“键盘输入3时切换到用户模式，键盘输入0时切换到内核模式”。 基本思路是借鉴软中断(syscall功能)的代码，并且把trap.c中软中断处理的设置语句拿过来。
