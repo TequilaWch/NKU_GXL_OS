@@ -381,18 +381,18 @@ ljmp $PROT_MODE_CSEG, $protcseg
 ```assembly
 # 第六部分:初始化各个段寄存器并建立堆栈	
 	movw $PROT_MODE_DSEG, %ax                       
-    movw %ax, %ds                                   
-    movw %ax, %es                                   
-    movw %ax, %fs                                  
-    movw %ax, %gs                                   
-    movw %ax, %ss                                 
+	movw %ax, %ds                                   
+	movw %ax, %es                                   
+	movw %ax, %fs                                  
+	movw %ax, %gs                                   
+	movw %ax, %ss                                 
 
-    movl $0x0, %ebp
-    movl $start, %esp
+	movl $0x0, %ebp
+	movl $start, %esp
 # 第七部分:调用bootmain    
-    call bootmain
+	call bootmain
 spin:
-    jmp spin
+	jmp spin
 ```
 
 这个就是将各个段寄存器设置为0x10h，ebp指向0x0h，esp指向start也就是0x7c00处，最后使用call函数将返回地址入栈，控制权交给bootmain。
@@ -513,8 +513,8 @@ ebp=: 0x00007bf8 | eip=: 0x00007d72 | args=: 0xc031fcfa 0xc08ed88e 0x64e4d08e 0x
 
 ```assembly
 # bootloader前三条指令对应的机器码
-7c00:	cli 				fa                   	
-7c01:	cld 				fc   
+7c00:	cli 			fa                   	
+7c01:	cld 			fc   
 7c02:	xor    %eax,%eax	31 c0
 # 由于是小端字节序，所以存储为 c0 31 fc fa
 ```
