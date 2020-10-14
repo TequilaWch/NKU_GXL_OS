@@ -354,7 +354,7 @@ seta20.2:
     testb $0x2, %al			#同1
     jnz seta20.2			#同1
     movb $0xdf, %al         #将0xdfh写入al寄存器                       
-    outb %al, $0x60         #向0x60h写入0x60，打开A20                 
+    outb %al, $0x60         #向0x60h写入0xdfh，打开A20                 
 ```
 
 之后就是第三部分，初始化GDT表，通过lgdt gdtdesc指令就可以实现。
