@@ -406,7 +406,110 @@ spin:
 - bootloader是如何读取硬盘扇区？
 - bootloader是如何加载ELF格式的OS？
 
+理论部分**
 
+kernel是一个elf文件，因此需要理解bootloader是如何从磁盘扇区读取kernel并在读取后进行分析的。
+
+/* readsect - read a single sector at @secno into @dst */
+static void
+readsect(void *dst, uint32_t secno) {
+    // wait for disk to be ready 等磁盘准备好
+    waitdisk();       
+
+    //把参数设置好，明确读取磁盘的命令
+    outb(0x1F2, 1);                         // count = 1
+    outb(0x1F3, secno & 0xFF);
+    outb(0x1F4, (secno >> 8) & 0xFF);
+    outb(0x1F5, (secno >> 16) & 0xFF);
+    outb(0x1F6, ((secno >> 24) & 0xF) | 0xE0);
+    outb(0x1F7, 0x20);                      // cmd 0x20 - read sectors
+
+    // wait for disk to be ready
+    waitdisk();
+
+    // read a sector 如果0x1F7不忙的话就从0x1F0把磁盘扇区数据读取到相应的内存上去
+    insl(0x1F0, dst, SECTSIZE / 4);
+}
+image-20201004161057265
+
+bootloader通过readsec函数来读取磁盘扇区，用到了内联汇编的in和out系列函数。所有的IO操作是通过CPU访问硬盘的IO地址寄存器完成，其中访问第一个硬盘的扇区是通过设置IO地址寄存器0x1f0-0x1f7实现的，具体参数可见上表，每个通道的主从盘的选择通过第6 个IO偏移地址寄存器来设置，地址的第6位如果是1，那就是LBA模式，为0就是CHS模式；而readsec函数中用到的in和out函数的参数表也如下所示。
+
+/* insl:从I/O端口port读取count个数据(单位双字)到以内存地址addr为开始的内存空间 */ void insl(unsigned port, void *addr, unsigned long count);
+
+/* outb:写字节端口(8位宽)。 */ void outb(unsigned char byte, unsigned port);
+
+//readseg函数实现了从offset地址处读取count个字节的数据到虚拟地址va处的功能
+static void
+readseg(uintptr_t va, uint32_t count, uint32_t offset) {
+    uintptr_t end_va = va + count;
+
+    // round down to sector boundary
+    va -= offset % SECTSIZE;
+
+    // translate from bytes to sectors; kernel starts at sector 1
+    //因为sector1从1开始，所以+1不能忘
+    uint32_t secno = (offset / SECTSIZE) + 1;
+
+    // If this is too slow, we could read lots of sectors at a time.
+    // We'd write more to memory than asked, but it doesn't matter --
+    // we load in increasing order.
+    for (; va < end_va; va += SECTSIZE, secno ++) {
+        readsect((void *)va, secno);
+    }
+}
+readseg读入好多个字节，并转化成扇区可以读的大小，把值传给readsect代码。最终的读取扇区工作由readsect实现。
+
+/* bootmain - the entry of bootloader */
+void
+bootmain(void) {
+    // read the 1st page off disk
+    readseg((uintptr_t)ELFHDR, SECTSIZE * 8, 0);
+
+    // is this a valid ELF?
+    if (ELFHDR->e_magic != ELF_MAGIC) {
+        //判断e_magic是不是ELF_MAGIC类型，如果不是的话说明文件无效
+        goto bad;
+    }
+
+    struct proghdr *ph, *eph;
+
+    // load each program segment (ignores ph flags)
+    ph = (struct proghdr *)((uintptr_t)ELFHDR + ELFHDR->e_phoff); 
+    //e_phoff是program header表的偏移位置，所以现在ph找到了program header表的实际位置
+    eph = ph + ELFHDR->e_phnum;  //e_phnum是表中的入口数目
+    for (; ph < eph; ph ++) {
+        //p_va是段的第一个字节将被放到内存中的虚拟地址；
+        //p_memsz是段在内存映像中占用的字节数；
+        //p_offset是段相对文件头的偏移值；
+        //readseg(uintptr_t va, uint32_t count, uint32_t offset)对照段的读取函数进行参数输入
+        readseg(ph->p_va & 0xFFFFFF, ph->p_memsz, ph->p_offset);
+    }
+
+    // call the entry point from the ELF header
+    // note: does not return
+    //运行程序入口的虚拟地址
+    ((void (*)(void))(ELFHDR->e_entry & 0xFFFFFF))();
+
+bad:
+    outw(0x8A00, 0x8A00);
+    outw(0x8A00, 0x8E00);
+
+    /* do nothing */
+    while (1);
+}
+由上述代码可以得出bootloader加载ELF格式文件的步骤：
+
+先判断是不是有效的ELF文件；
+通过elf的文件头找到program header表；
+根据program header表中的每个段的内存映像地址、大小等，并读取段数据（如数据段、代码段等）
+必要的数据读取完成后跳转到程序入口的虚拟地址准备运行。
+image-20201009211619382
+
+ELF文件格式如上，对照此图，可以更清晰地看到bootloader在判断完elf文件类型后，跳转到相应的段进行后需磁盘访问。
+
+image-20201009000359307
+
+利用understand可以查看regsect的函数调用
 
 
 
