@@ -406,7 +406,7 @@ spin:
 - bootloader是如何读取硬盘扇区？
 - bootloader是如何加载ELF格式的OS？
 
-理论部分**
+理论部分
 
 kernel是一个elf文件，因此需要理解bootloader是如何从磁盘扇区读取kernel并在读取后进行分析的。
 
