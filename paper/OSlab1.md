@@ -705,9 +705,9 @@ ebp=: 0x00007bf8 | eip=: 0x00007d72 | args=: 0xc031fcfa 0xc08ed88e 0x64e4d08e 0x
 
 最后一行中给出了ebp，eip和args三个参数，其具体意义为
 
-- **ebp=: 0x00007bf8** 是kern_init函数的栈顶地址，因为在先前的部分中我们知道整个栈的栈顶是0x7c00，ss[ebp]指向上一层的ebp，ss[ebp+4]指向返回地址，7bf8 + 0008 = 7c00，这意味着bootmain函数没有输入参数，只占用了旧ebp和返回地址一共8个字节
-- **eip=: 0x00007d72** 是kern_init函数的返回地址，也就是调用kern_init函数对应的指令的下一条指令的地址。
-- **args=: 0xc031fcfa 0xc08ed88e 0x64e4d08e 0xfa7502a8** 通常状态下，args存放的四个dword是对应4个输入参数的值。但是这里其实没有传递输入参数。不过因为此时的栈顶位置恰好在bootloader第一条指令存放的地址的上面，args是kern_init的ebp寄存器的栈顶往上的第二到第五个四字节，也就是说args其实是bootloader指令的前十六个字节，下面这个例子就能很好的说明情况
+- **ebp=: 0x00007bf8** 是跳转到bootmain
+- **eip=: 0x00007d72** 是从bootasm.s跳转到bootmain前的地址，也就是bootmain的返回地址。
+- **args=: 0xc031fcfa 0xc08ed88e 0x64e4d08e 0xfa7502a8** 通常状态下，args存放的四个dword是对应4个输入参数的值。但是再最底层处，即7c00往后增加的地址处，那里是bootloader的代码段，所以最后的args其实是bootloader指令的前十六个字节，下面这个例子就能很好的说明情况
 
 ```assembly
 # bootloader前三条指令对应的机器码
