@@ -230,7 +230,7 @@ int main(int argc, char *argv[]) {
 
    bootmain函数的功能？
 
-   ![](gdbinit_brkpt0.png)
+   ![gdbinit_brkpt0.png](https://i.loli.net/2020/10/19/guOwJQHcUhmXqzW.png)
 
    **查看后续BIOS代码**：
 
@@ -245,15 +245,13 @@ int main(int argc, char *argv[]) {
 
    
 
-   
-
 3. **跳转到bootloader：在0x7c00处设置断点、测试正常可用**
 
    如图。执行make lab1-mon命令后可在0x7c00处停住，并能按照指定规则打印出相应的汇编码。
 
    这个地址在lab1init文件中显式给出。
 
-   ![](gdb_break.png)
+   ![gdb_break.png](https://i.loli.net/2020/10/19/i1xRvgVa3KWkG8f.png)
 
 4. **单步调试+反汇编，跟踪代码运行，将调试时得到的反汇编代码与bootasm.S和bootblock.asm进行比较。**
 
@@ -261,7 +259,7 @@ int main(int argc, char *argv[]) {
 
    **bootasm.s中包括的功能代码或代码块**：禁止中断，设置寻址方向为朝向高地址，初始化（清空）DS, ES, SS段寄存器，A20使能，保护模式下初始化（设为保护模式的数据段选择子）数据段寄存器DS, ES, FS, GS, SS，初始化一个栈的指针并调用bootmain.c中的bootmain函数执行bootloader（如果这个函数意外地返回则在下方汇编代码里进入死循环）
 
-   ![layout_asm](layout_asm.png)
+   ![layout_asm.png](https://i.loli.net/2020/10/19/QuhMgexjoWnyRcz.png)
 
    可视化窗口的汇编风格是x86的，而bootasm.s文件是AT&T写法。
 
@@ -287,7 +285,7 @@ int main(int argc, char *argv[]) {
 
 5. **自己找一个bootloader或内核中的代码位置设置断点并进行测试**
 
-   ![](break2.png)
+   ![break2.png](https://i.loli.net/2020/10/19/Xw4HKBuPE26qz8V.png)
 
    仿照之前的断点命令格式，在lab1init文件中添加一个断点，地址是0x7c02，测试可用。
 
