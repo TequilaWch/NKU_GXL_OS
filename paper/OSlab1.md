@@ -560,7 +560,7 @@ lab1_switch_to_user(void) {
 
 没有东西只能白手起家，还能咋地。先把写好的代码贴出来，之后再进行详细的解释
 
-```c
+```CQL
 //	init.c
 static void
 lab1_switch_to_user(void) {
@@ -590,6 +590,7 @@ lab1_switch_to_kernel(void) {
 	case T_SWITCH_TOU:
         if(tf->tf_cs != USER_CS)	//检查是不是用户态，不是就操作
         {
+            	cprintf("...to user\n");
                 // 设置用户态对应的cs,ds,es,ss四个寄存器
             	tf->tf_cs = USER_CS;
                 tf->tf_ds = tf->tf_es = tf->tf_ss = USER_DS;
@@ -601,6 +602,7 @@ lab1_switch_to_kernel(void) {
 	case T_SWITCH_TOK:
         if(tf->tf_cs != KERNEL_CS)	//检查是不是内核态，不是就操作
         {
+            	cprintf("...to kernel\n");
             	// 设置内核态对应的cs,ds,es三个寄存器
                 tf->tf_cs = KERNEL_CS;
                 tf->tf_ds = tf->tf_es = KERNEL_DS;
@@ -742,3 +744,42 @@ lab1_switch_to_kernel(void) {
 ## 扩展练习 Challenge2(需要编程)
 
 > 用键盘实现用户模式内核模式切换。具体目标是：“键盘输入3时切换到用户模式，键盘输入0时切换到内核模式”。 基本思路是借鉴软中断(syscall功能)的代码，并且把trap.c中软中断处理的设置语句拿过来。
+
+在Challenge1中我们其实已经实现了用户模式和内核模式的相互切换，所需要的只是增加一个用键盘输入来控制切换的功能。我们找到控制状态切换的trap.c文件中的trap_dispatch函数。他已经很贴心的给我们写了一个case IRQ_OFFSET + IRQ_KBD:(键盘输入情况)
+
+很自然的能够想到，用**if-else**结构就可以实现一个控制。那么到此编程的思路已经十分明确了。直接贴出我们的代码
+
+```c
+case IRQ_OFFSET + IRQ_KBD:
+        c = cons_getc();
+        cprintf("kbd [%03d] %c\n", c, c);
+        if(c == '0')
+        {
+                cprintf("Input 0......switch to kernel\n");
+                tf->tf_cs = KERNEL_CS;
+                tf->tf_ds = tf->tf_es = KERNEL_DS;
+                tf->tf_eflags &= ~FL_IOPL_MASK;
+        }
+        else if (c == '3')
+        {
+                cprintf("Input 3......switch to user\n");
+                tf->tf_cs = USER_CS;
+                tf->tf_ds = tf->tf_es = tf->tf_ss = USER_DS;
+                tf->tf_eflags |= FL_IOPL_MASK;
+        }
+        break;
+```
+
+完成了所有的实验和challeng之后，使用
+
+```
+$ make qemu
+```
+
+执行出来的程序应该出现如下情况
+
+![01.png](https://i.loli.net/2020/10/19/eCbnJzD7joT5RpO.png)
+
+![02.png](https://i.loli.net/2020/10/19/Ej9x48r2cCqD6Vf.png)
+
+![03.png](https://i.loli.net/2020/10/19/nQ8HevbaUI93lgm.png)
