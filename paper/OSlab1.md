@@ -190,9 +190,106 @@ int main(int argc, char *argv[]) {
 3. 从0x7c00开始跟踪代码运行，将单步跟踪反汇编得到的代码与bootasm.S和bootblock.asm进行比较
 4. 自己找一个booloader或内核中的代码位置，设置断点并进行测试。
 
+### 解题过程如下：
+1. **启动gdb，连接到qemu进行远程调试**
 
+   #### gdb调试：
 
+   摘录部分常用命令和参数如下：
 
+   - list \<linenum> ，显示程序第linenum行周围的源程序；list \<function> ，显示函数名为function的函数的源程序；list，显示当前行后面的源程序；list - ，显示当前行前面的源程序
+   - path \<dir>，设定程序运行路径；how paths查看路径
+   - cd \<dir>，相当于shell的cd命令；pwd显示当前所在目录
+   - break [filename:]\<function>或[filename:]\<linenum>，在源文件（可选参数）的某个函数或某行停住；break +offset或-offset，在当前行号的前面或后面的offset行停住，offset为自然数；break *address，在程序运行的内存地址停住；break，无参数时表示在下一条指令处停住；break ... if \<condition>，以上命令均可与if语句配合使用，使得满足一定条件时在指定位置停住程序
+   - info break[n]或breakpoints[n]，查看第n个断点；info break，列出当前所设置的所有观察点
+   - 单步调试：next，相当于VC++当中的step over；step，相当于step into
+   - continue或c或fg：继续执行程序直到程序结束或到达下一个断点
+   - x /nfu [addr]，显示指定地址addr及其附近的内容，其中n表示机器指令（汇编码）个数，f表示格式（包括十六进制x、字符串s、指令i等），u表示单元大小（b：1B，h：2B，w：4B，g：8B），如果不显式指定addr，则地址默认为上一次x命令显示之后的地址。
+   - layout，打开可视化窗口；layout asm，打开反汇编窗口；ctrl+x a，退出当前可视化窗口回到终端
+
+   #### 所用gdb命令：
+
+   ```shell
+   file bin/kernel #指定调试目标文件，让gdb获得符号信息
+   target remote :1234 #设置远程连接端口为qemu的运行端口1234，连接到qemu
+   set architecture i8086 #指定qemu要模拟的硬件架构
+   b *0x7c00 #在bootloader开始地址0x7c00处下断点
+   continue #开始调试，执行到刚才指定的断点
+   x /2i $pc #以十六进制格式打印当前机器指令及其下方一条机器指令的地址，并显示汇编
+   
+   layout asm #显示汇编可视化窗口
+   ```
+
+   
+
+2. **BIOS启动：gdb查看启动后第一条执行的指令并查看BIOS代码**
+
+   修改gdbinit中指令为，在lab1目录下执行make debug命令启动qemu，程序在启动后第一条指令停住。（*按照原来文件的命令，停在了0x100000，kern_init函数的入口地址，应该不符合题目要求，题目答案改成了break bootmain*）
+
+   kernel 加载进来时用.ld文件链接操作系统
+
+   bootmain函数的功能？
+
+   ![](gdbinit_brkpt0.png)
+
+   **查看后续BIOS代码**：
+
+   执行类似x /10i addr的命令即可
+
+   ```shell
+   file obj/bootblock.o
+   target remote:1234
+   break bootmain
+   continue
+   ```
+
+   
+
+   
+
+3. **跳转到bootloader：在0x7c00处设置断点、测试正常可用**
+
+   如图。执行make lab1-mon命令后可在0x7c00处停住，并能按照指定规则打印出相应的汇编码。
+
+   这个地址在lab1init文件中显式给出。
+
+   ![](gdb_break.png)
+
+4. **单步调试+反汇编，跟踪代码运行，将调试时得到的反汇编代码与bootasm.S和bootblock.asm进行比较。**
+
+   **bootasm.s中包括的定义**：内核代码段选择子、内核数据段选择子、保护模式使能标志、全局描述符表
+
+   **bootasm.s中包括的功能代码或代码块**：禁止中断，设置寻址方向为朝向高地址，初始化（清空）DS, ES, SS段寄存器，A20使能，保护模式下初始化（设为保护模式的数据段选择子）数据段寄存器DS, ES, FS, GS, SS，初始化一个栈的指针并调用bootmain.c中的bootmain函数执行bootloader（如果这个函数意外地返回则在下方汇编代码里进入死循环）
+
+   ![layout_asm](layout_asm.png)
+
+   可视化窗口的汇编风格是x86的，而bootasm.s文件是AT&T写法。
+
+   *——如上图，可视化窗口来到保护模式下初始化的时候，没看到DS的初始化，但.s文件里是有的*
+
+   ```shell
+   0x7c4a	call 0x7cfe #bootmain函数的起始地址应该在此处，但这个地址上的汇编是pop %bp？？
+   ```
+
+   ```shell
+   0x7c4f	jmp	0x7c4f #接下来是一个死循环
+   ```
+
+   
+
+   编译lab1中的代码，在其中obj文件夹下找到**bootblock.asm**，即bootloader的汇编代码源文件。
+
+   看到各指令下方均标明了所在地址和对应的十六进制机器码，和可视化窗口中的能够相互对应。
+
+   *这个文件的105行声称bootmain的起始地址是7cd1？？*
+
+   
+
+5. **自己找一个bootloader或内核中的代码位置设置断点并进行测试**
+
+   ![](break2.png)
+
+   仿照之前的断点命令格式，在lab1init文件中添加一个断点，地址是0x7c02，测试可用。
 
 
 
