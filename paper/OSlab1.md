@@ -525,9 +525,8 @@ readsect(void *dst, uint32_t secno) {
     // read a sector 如果0x1F7不忙的话就从0x1F0把磁盘扇区数据读取到相应的内存上去
     insl(0x1F0, dst, SECTSIZE / 4);
 }
-image-20201004161057265
 
-bootloader通过readsec函数来读取磁盘扇区，用到了内联汇编的in和out系列函数。所有的IO操作是通过CPU访问硬盘的IO地址寄存器完成，其中访问第一个硬盘的扇区是通过设置IO地址寄存器0x1f0-0x1f7实现的，具体参数可见上表，每个通道的主从盘的选择通过第6 个IO偏移地址寄存器来设置，地址的第6位如果是1，那就是LBA模式，为0就是CHS模式；而readsec函数中用到的in和out函数的参数表也如下所示。
+bootloader通过readsec函数来读取磁盘扇区，用到了内联汇编的in和out系列函数。所有的IO操作是通过CPU访问硬盘的IO地址寄存器完成，其中访问第一个硬盘的扇区是通过设置IO地址寄存器0x1f0-0x1f7实现的，每个通道的主从盘的选择通过第6 个IO偏移地址寄存器来设置，地址的第6位如果是1，那就是LBA模式，为0就是CHS模式；而readsec函数中用到的in和out函数的参数表也如下所示。
 
 /* insl:从I/O端口port读取count个数据(单位双字)到以内存地址addr为开始的内存空间 */ void insl(unsigned port, void *addr, unsigned long count);
 
@@ -598,13 +597,10 @@ bad:
 通过elf的文件头找到program header表；
 根据program header表中的每个段的内存映像地址、大小等，并读取段数据（如数据段、代码段等）
 必要的数据读取完成后跳转到程序入口的虚拟地址准备运行。
-image-20201009211619382
 
-ELF文件格式如上，对照此图，可以更清晰地看到bootloader在判断完elf文件类型后，跳转到相应的段进行后需磁盘访问。
+从ELF文件格式可以更清晰地看到bootloader在判断完elf文件类型后，跳转到相应的段进行后需磁盘访问。
 
-image-20201009000359307
-
-利用understand可以查看regsect的函数调用
+我们还可以利用understand可以查看regsect的函数调用
 
 
 
@@ -951,14 +947,14 @@ lab1_switch_to_kernel(void) {
 case IRQ_OFFSET + IRQ_KBD:
         c = cons_getc();
         cprintf("kbd [%03d] %c\n", c, c);
-        if(c == '0')
+        if(c == '0' && (tf->tf_cs & 3) != 0)
         {
                 cprintf("Input 0......switch to kernel\n");
                 tf->tf_cs = KERNEL_CS;
                 tf->tf_ds = tf->tf_es = KERNEL_DS;
                 tf->tf_eflags &= ~FL_IOPL_MASK;
         }
-        else if (c == '3')
+        else if (c == '3' && (tf->tf_cs & 3) != 3)
         {
                 cprintf("Input 3......switch to user\n");
                 tf->tf_cs = USER_CS;
