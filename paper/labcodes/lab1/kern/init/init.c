@@ -92,7 +92,7 @@ lab1_switch_to_user(void) {
         : "i"(T_SWITCH_TOU)
     );
     //cprintf("to user finish \n");
-
+}
 static void
 lab1_switch_to_kernel(void) {
     //LAB1 CHALLENGE 1 :  TODO
