@@ -207,7 +207,7 @@ int main(int argc, char *argv[]) {
    - x /nfu [addr]，显示指定地址addr及其附近的内容，其中n表示机器指令（汇编码）个数，f表示格式（包括十六进制x、字符串s、指令i等），u表示单元大小（b：1B，h：2B，w：4B，g：8B），如果不显式指定addr，则地址默认为上一次x命令显示之后的地址。
    - layout，打开可视化窗口；layout asm，打开反汇编窗口；ctrl+x a，退出当前可视化窗口回到终端
 
-   #### 所用gdb命令：
+   #### 所用gdb命令，结合makefile使用（下列代码执行时只需在命令行输入make lab1-mon）：
 
    ```shell
    file bin/kernel #指定调试目标文件，让gdb获得符号信息
@@ -224,26 +224,21 @@ int main(int argc, char *argv[]) {
 
 2. **BIOS启动：gdb查看启动后第一条执行的指令并查看BIOS代码**
 
-   修改gdbinit中指令为，在lab1目录下执行make debug命令启动qemu，程序在启动后第一条指令停住。（*按照原来文件的命令，停在了0x100000，kern_init函数的入口地址，应该不符合题目要求，题目答案改成了break bootmain*）
-
-   kernel 加载进来时用.ld文件链接操作系统
-
-   bootmain函数的功能？
+   修改gdbinit中指令为：
+      ```shell
+   file obj/bootblock.o
+   target remote:1234
+   break *0x
+   continue
+   ```
+   在lab1目录下执行make debug命令启动qemu，程序在启动后第一条指令停住。（*按照原来文件的命令，停在了0x100000，kern_init函数的入口地址*）
 
    ![gdbinit_brkpt0.png](https://i.loli.net/2020/10/19/guOwJQHcUhmXqzW.png)
 
    **查看后续BIOS代码**：
 
    执行类似x /10i addr的命令即可
-
-   ```shell
-   file obj/bootblock.o
-   target remote:1234
-   break bootmain
-   continue
-   ```
-
-   
+  
 
 3. **跳转到bootloader：在0x7c00处设置断点、测试正常可用**
 
@@ -257,30 +252,21 @@ int main(int argc, char *argv[]) {
 
    **bootasm.s中包括的定义**：内核代码段选择子、内核数据段选择子、保护模式使能标志、全局描述符表
 
-   **bootasm.s中包括的功能代码或代码块**：禁止中断，设置寻址方向为朝向高地址，初始化（清空）DS, ES, SS段寄存器，A20使能，保护模式下初始化（设为保护模式的数据段选择子）数据段寄存器DS, ES, FS, GS, SS，初始化一个栈的指针并调用bootmain.c中的bootmain函数执行bootloader（如果这个函数意外地返回则在下方汇编代码里进入死循环）
+   **bootasm.s中包括的功能代码或代码块**：禁止中断，设置寻址方向为朝向高地址，初始化（清空）DS, ES, SS段寄存器，A20使能，保护模式下初始化（设为保护模式的数据段选择子）数据段寄存器DS, ES, FS, GS, SS，初始化一个栈的指针并调用bootmain.c中的bootmain函数执行bootloader（这个函数不应该返回，如果意外返回则在下方汇编代码里进入死循环）
+   ```shell
+   0x7c4f  jmp	0x7c4f #一个死循环
+   ```
 
    ![layout_asm.png](https://i.loli.net/2020/10/19/QuhMgexjoWnyRcz.png)
 
-   可视化窗口的汇编风格是x86的，而bootasm.s文件是AT&T写法。
+   可视化窗口的反汇编代码风格是x86的，而bootasm.s文件是AT&T风格，二者功能相同。
 
-   *——如上图，可视化窗口来到保护模式下初始化的时候，没看到DS的初始化，但.s文件里是有的*
 
    ```shell
    0x7c4a	call 0x7cfe #bootmain函数的起始地址应该在此处，但这个地址上的汇编是pop %bp？？
    ```
 
-   ```shell
-   0x7c4f	jmp	0x7c4f #接下来是一个死循环
-   ```
-
-   
-
-   编译lab1中的代码，在其中obj文件夹下找到**bootblock.asm**，即bootloader的汇编代码源文件。
-
-   看到各指令下方均标明了所在地址和对应的十六进制机器码，和可视化窗口中的能够相互对应。
-
-   *这个文件的105行声称bootmain的起始地址是7cd1？？*
-
+   编译lab1中的代码，在其中obj文件夹下找到**bootblock.asm**，即bootloader的汇编代码源文件，看到各指令下方均标明了所在地址和对应的十六进制机器码，和反汇编代码能够相互对应。
    
 
 5. **自己找一个bootloader或内核中的代码位置设置断点并进行测试**
@@ -756,7 +742,7 @@ ebp=: 0x00007bf8 | eip=: 0x00007d72 | args=: 0xc031fcfa 0xc08ed88e 0x64e4d08e 0x
 
    **SETGATE宏将被替换为一个语句块，功能是给IDT这个结构体数组（结构体名：gatedesc）的各项成员赋值，即用于初始化门描述符，参数的意义分别是**：
 
-   - gate：结合IDTR获得的地址
+   - gate：取为idt[]的一项，就是一个gatedesc结构体
    - istrap：0或1，0选择中断门，1选择陷阱门
    - sel：中断处理程序所在段的段选择子
    - off：32位偏移量，由16位的两部分拼接而成
@@ -766,16 +752,15 @@ ebp=: 0x00007bf8 | eip=: 0x00007d72 | args=: 0xc031fcfa 0xc08ed88e 0x64e4d08e 0x
 
    **IDT初始化整体流程是先初始化内核态中断，再初始化系统调用中断，最后在IDTR寄存器中存放IDT的地址，代码如下**：
 
-   ![3.png](https://i.loli.net/2020/10/24/uW1tTqK5jIwFn4d.png)
+   ![3.png](https://i.loli.net/2020/10/24/iU8TXbcC4L6hWfK.png)
 
    - 根据提示，中断服务例程（ISR）的入口地址都存放在uintptr_t类型的__vectors数组中，该数组由tools/vectors.c生成，存放在kern/trap/vector.S中 ；
 
    ![4.png](https://i.loli.net/2020/10/24/TKVZBaI1O5zfSl4.png)
 
-   - vectori调用kern/trap/trapentry.S中__alltraps函数获得中断向量；
+   - vectori即为中断向量，跳转到对应的中断向量之后，将调用kern/trap/trapentry.S中__alltraps函数保存被打断的程序的现场；
    - trap.c中为IDT准备了结构体数组定义：类型为gatedesc的idt[256]，每个IDT表项就是该数组中的一项，使用SETGATE宏进行初始化；
    - 中断的特权级应设为ring 0，使用/kern/mm/memlayout.h中定义的系统、用户特权级变量（DPL_KERNEL，值是0；DPL_USER，值是3）；
-   - 设置第121号中断（T_SWITCH_TOK）为系统调用中断，需从用户态切换到内核态
    - IDT的内容初始化完成后，还需要将IDT的起始地址加载到IDTR寄存器里，即需调用lidt指令——在C程序里写调用的方法是使用x86.h中定义的lidt函数（该函数参数类型pseudodesc也定义在x86.h中，可以看到存放了段的大小和基址），其功能是生成内联汇编来调用lidt指令（volatile关键字的意思是编译时拒绝优化）。
 
    ![5.png](https://i.loli.net/2020/10/24/LSJ6IWlETd5iaHO.png)
