@@ -226,14 +226,13 @@ int main(int argc, char *argv[]) {
 
    修改gdbinit中指令为：
       ```shell
-   file obj/bootblock.o
+   set architecture i8086
    target remote:1234
-   break *0x
-   continue
    ```
-   在lab1目录下执行make debug命令启动qemu，程序在启动后第一条指令停住。（*按照原来文件的命令，停在了0x100000，kern_init函数的入口地址*）
-
-   ![gdbinit_brkpt0.png](https://i.loli.net/2020/10/19/guOwJQHcUhmXqzW.png)
+   在lab1目录下执行make debug命令启动qemu，程序在启动后第一条指令停住。
+   
+   ![bios.png](https://i.loli.net/2020/10/24/dcJICgLnW5ExB3M.png)
+  
 
    **查看后续BIOS代码**：
 
