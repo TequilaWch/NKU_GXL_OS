@@ -169,6 +169,67 @@ get_pte(pde_t *pgdir, uintptr_t la, bool create) {
 }
 ```
 
+la,PDX,PTX,PTE_ADDR,PDE_ADDR的定义可以在mmu.h下看到，具体内容如下
+
+~~~c
+// A linear address 'la' has a three-part structure as follows:
+//
+// +--------10------+-------10-------+---------12----------+
+// | Page Directory |   Page Table   | Offset within Page  |
+// |      Index     |     Index      |                     |
+// +----------------+----------------+---------------------+
+//  \--- PDX(la) --/ \--- PTX(la) --/ \---- PGOFF(la) ----/
+//  \----------- PPN(la) -----------/
+//
+// The PDX, PTX, PGOFF, and PPN macros decompose linear addresses as shown.
+// To construct a linear address la from PDX(la), PTX(la), and PGOFF(la),
+// use PGADDR(PDX(la), PTX(la), PGOFF(la)).
+
+// page directory index
+#define PDX(la) ((((uintptr_t)(la)) >> PDXSHIFT) & 0x3FF)
+
+// page table index
+#define PTX(la) ((((uintptr_t)(la)) >> PTXSHIFT) & 0x3FF)
+
+// offset in page
+#define PGOFF(la) (((uintptr_t)(la)) & 0xFFF)
+
+// address in page table or page directory entry
+#define PTE_ADDR(pte)   ((uintptr_t)(pte) & ~0xFFF)
+#define PDE_ADDR(pde)   PTE_ADDR(pde)
+~~~
+
+其高10位用作PDT的索引，中10位用作PTT的索引，末12位用作物理页偏移量
+
+KADDR，page2pa可以在pmm.h中看到
+
+```c
+/* *
+ * KADDR - takes a physical address and returns the corresponding kernel virtual
+ * address. It panics if you pass an invalid physical address.
+ * */
+#define KADDR(pa) ({                                                    \
+            uintptr_t __m_pa = (pa);                                    \
+            size_t __m_ppn = PPN(__m_pa);                               \
+            if (__m_ppn >= npage) {                                     \
+                panic("KADDR called with invalid pa %08lx", __m_pa);    \
+            }                                                           \
+            (void *) (__m_pa + KERNBASE);                               \
+        })
+
+static inline ppn_t
+page2ppn(struct Page *page) {
+    return page - pages;
+}
+// PGSHIFT = log2(PGSIZE) = 12
+static inline uintptr_t
+page2pa(struct Page *page) {
+    return page2ppn(page) << PGSHIFT;
+}
+```
+
+
+
 ## 练习3：释放某虚地址所在的页并取消对应二级页表项的映射(需要编程)
 
 > 当释放一个包含某虚地址的物理内存页时，需要让对应此物理内存页的管理数据结构Page做相关的清除处理，使得此物理内存页成为空闲；另外还需把表示虚地址与物理地址对应关系的二级页表项清除。请仔细查看和理解page_remove_pte函数中的注释。为此，需要补全在 kern/mm/pmm.c中的page_remove_pte函数。
