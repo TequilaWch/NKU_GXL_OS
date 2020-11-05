@@ -9,6 +9,9 @@
 - 理解物理内存的管理方法
 
 在开始实验前，别忘了将lab1中已经完成的代码填入本实验中代码有LAB1的注释的相应部分。可以采用diff和patch工具进行半自动的合并(merge)，也可以用一些图形化的比较/merge工具来合并，比如meld，eclipse中的diff/merge工具，understand中的diff/merge工具
+## 练习0：合并Lab0和Lab1代码
+
+使用meld工具打开文件进行比较，因为lab1只修改了trap.c，init.c和kdegub.c这三个文件，所以一一比较合并即可。
 
 ## 练习1：实现first-fit连续物理内存分配算法(需要编程)
 
@@ -238,6 +241,96 @@ page2pa(struct Page *page) {
 >
 > - 数据结构Page的全局变量（其实是一个数组）的每一项与页表中的页目录项和页表项有无对应关系？如果有，其对应关系是啥？
 > - 如果希望虚拟地址与物理地址相等，则需要如何修改lab2，完成此事？ 鼓励通过编程来具体完成这个问题
+##### 关于代码：
+
+练习3可以看成是练习2的简单的逆过程，在理解了练习2的基础上，释放虚地址所在的页和取消对应二级页表项的映射可以大概分为如下步骤：
+
+1. 通过PTE_P判断该ptep是否存在；
+2. 判断Page的ref的值是否为0，若为0，则说明此时没有任何逻辑地址被映射到此物理地址，换句话说当前物理页已没人使用，因此调用free_page函数回收此物理页，使得该物理页空闲；若不为0，则说明此时仍有至少一个逻辑地址被映射到此物理地址，因此不需回收此物理页；
+3. 把表示虚地址与物理地址对应关系的二级页表项清除；
+4. 更新TLB；
+
+根据Lab2中的代码提示，我们将MACROs 和 DEFINES拿出进行理解：
+
+```c
+static inline struct Page *
+pte2page(pte_t pte) {//从ptep值中获取相应的页面
+    if (!(pte & PTE_P)) {
+        panic("pte2page called with invalid pte");
+    }
+    return pa2page(PTE_ADDR(pte));
+}
+
+//减少该页的引用次数，返回剩下的引用次数。
+static inline int  
+page_ref_dec(struct Page *page) {
+    page->ref -= 1;
+    return page->ref;
+}
+
+//当修改的页表目前正在被进程使用时，使之无效。
+void 
+tlb_invalidate(pde_t *pgdir, uintptr_t la) {
+    if (rcr3() == PADDR(pgdir)) {
+        invlpg((void *)la);
+    }
+}
+
+
+
+#define PTE_P           0x001                   // Present，即最低位为1；
+
+```
+
+在此基础之上，我们给出完整的代码：
+
+```C
+static inline void
+page_remove_pte(pde_t *pgdir, uintptr_t la, pte_t *ptep) {
+
+if (*ptep & PTE_P) {
+        // 如果对应的二级页表项存在，如果*ptep存在，则其与PTE_P相与，得到的是1；
+        struct Page *page = pte2page(*ptep);  // 获得*ptep对应的Page结构
+        // 关联的page引用数自减1，page_ref_dec的返回值是现在的page->ref
+       if(page_ref_dec(page) == 0) {
+            // 如果自减1后，引用数为0，需要free释放掉该物理页
+            free_page(page);
+        }
+        // 把表示虚地址与物理地址对应关系的二级页表项清除(通过把整体设置为0)
+        *ptep = 0;
+        // 由于页表项发生了改变，需要使TLB快表无效
+        tlb_invalidate(pgdir, la);
+    }
+   
+}
+```
+
+##### 关于问题：
+
+Q1：数据结构Page的全局变量（其实是一个数组）的每一项与页表中的页目录项和页表项有无对应关系？如果有，其对应关系是啥？
+
+A：所有的物理页都有一个描述它的Page结构，所有的页表都是通过alloc_page()分配的，每个页表项都存放在一个Page结构描述的物理页中；如果 PTE 指向某物理页，同时也有一个Page结构描述这个物理页。所以有两种对应关系：
+
+(1)可以通过 PTE 的地址计算其所在的页表的Page结构：
+
+ 将虚拟地址向下对齐到页大小，换算成物理地址(减 KERNBASE), 再将其右移 PGSHIFT(12)位获得在pages数组中的索引PPN，&pages[PPN]就是所求的Page结构地址。
+
+(2)可以通过 PTE 指向的物理地址计算出该物理页对应的Page结构：
+
+PTE 按位与 0xFFF获得其指向页的物理地址，再右移 PGSHIFT(12)位获得在pages数组中的索引PPN，&pages[PPN]就 PTE 指向的地址对应的Page结构。
+
+
+
+Q2：如果希望虚拟地址与物理地址相等，则需要如何修改lab2，完成此事？ 鼓励通过编程来具体完成这个问题。
+
+A：此时虚拟地址和物理地址的映射关系是：phy addr + KERNBASE = virtual addr
+
+所以如果想让虚拟地址=物理地址，则只要让KERNBASE = 0，因此去修改memlayout.h的宏定义
+
+```c
+#define KERNBASE            0xC0000000
+```
+
 
 
 
