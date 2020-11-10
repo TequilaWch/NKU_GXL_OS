@@ -370,7 +370,7 @@ A：此时虚拟地址和物理地址的映射关系是：phy addr + KERNBASE = 
 
 ​        在释放阶段，我们将之前分配出去的内存占有情况还原，并考察能否和同一父节点下的另一节点合并，而后递归合并，直至不能合并为止。
 
-![image-20201110000901267](C:\Users\user\AppData\Roaming\Typora\typora-user-images\image-20201110000901267.png)
+![image-20201110000901267.png](https://i.loli.net/2020/11/11/rVJYyaZokCqDPT1.png)
 
 ​       基于上面的理论准备，我们可以开始写代码了。因为buddy system替代的是之前的first fit算法，所以可以仿照default_pmm的格式来写。
 
