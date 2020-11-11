@@ -675,16 +675,15 @@ buddy_nr_free_pages(void) {
 //以下是一个测试函数
 static void
 buddy_check(void) {
-    struct Page *p0, *A, *B,*C,*D;
-    p0 = A = B = C = D =NULL;
+    struct Page  *A, *B;
+    A = B  =NULL;
 
-    assert((p0 = alloc_page()) != NULL);
     assert((A = alloc_page()) != NULL);
     assert((B = alloc_page()) != NULL);
 
-    assert(p0 != A && p0 != B && A != B);
-    assert(page_ref(p0) == 0 && page_ref(A) == 0 && page_ref(B) == 0);
-    free_page(p0);   //free page就是free pages(p0,1)
+    assert( A != B);
+    assert(page_ref(A) == 0 && page_ref(B) == 0);
+  //free page就是free pages(p0,1)
     free_page(A);
     free_page(B);
     
@@ -696,31 +695,12 @@ buddy_check(void) {
     free_pages(B,500);
     free_pages(A+250,250);
     
-    p0=alloc_pages(1024);
-    cprintf("p0 %p\n",p0);
-    assert(p0 == A);
-    //以下是根据链接中的样例测试编写的
-    A=alloc_pages(70);  
-    B=alloc_pages(35);
-    assert(A+128==B);//检查是否相邻
-    cprintf("A %p\n",A);
-    cprintf("B %p\n",B);
-    C=alloc_pages(80);
-    assert(A+256==C);//检查C有没有和A重叠
-    cprintf("C %p\n",C);
-    free_pages(A,70);//释放A
-    cprintf("B %p\n",B);
-    D=alloc_pages(60);
-    cprintf("D %p\n",D);
-    assert(B+64==D);//检查B，D是否相邻
-    free_pages(B,35);
-    cprintf("D %p\n",D);
-    free_pages(D,60);
-    cprintf("C %p\n",C);
-    free_pages(C,80);
-    free_pages(p0,1000);//全部释放
 }
 ```
+
+
+
+
 
 
 
