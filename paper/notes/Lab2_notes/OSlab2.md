@@ -22,6 +22,202 @@
 >
 > -  你的first fit算法是否有进一步的改进空间
 
+ucore中采用面向对象编程的思想，将物理内存管理的内容抽象成若干个特定的函数，并以结构体pmm_manager作为物理内存管理器封装各个内存管理函数的指针，这样在管理物理内存时只需调用结构体内封装的函数，从而可将内存管理功能的具体实现与系统中其他部分隔离开。pmm_manager中保存的函数及其功能如下所述：
+
+```c
+struct pmm_manager {
+    const char *name;                                 /*某种物理内存管理器的名称（可根据算法等具体实现的不同自定义新的内存管理器，这样也更加符合面向对象的思想）*/
+    void (*init)(void);                               /*物理内存管理器初始化，包括生成内部描述和数据结构（空闲块链表和空闲页总数）*/ 
+    void (*init_memmap)(struct Page *base, size_t n); /*初始化空闲页，根据初始时的空闲物理内存区域将页映射到物理内存上*/
+    struct Page *(*alloc_pages)(size_t n);            //申请分配指定数量的物理页
+    void (*free_pages)(struct Page *base, size_t n);  //申请释放若干指定物理页
+    size_t (*nr_free_pages)(void);                    //查询当前空闲页总数
+    void (*check)(void);                              //检查物理内存管理器的正确性
+};
+```
+
+> 上图为pmm.h当中定义的结构体pmm_manager
+
+涉及的结构体和宏定义：
+
+memlayout.h中：
+
+```c
+struct Page {
+    int ref;                        // page frame's reference counter
+    uint32_t flags;                 //描述物理页帧状态的标志位
+    unsigned int property;          //只在空闲块内第一页中用于记录该块中页数，其他页都是0
+    list_entry_t page_link;         //空闲物理内存块双向链表
+};
+```
+
+```c
+/* Flags describing the status of a page frame */
+#define PG_reserved                 0       // if this bit=1: the Page is reserved for kernel, cannot be used in alloc/free_pages; otherwise, this bit=0 
+#define PG_property                 1       // if this bit=1: the Page is the head page of a free memory block(contains some continuous_addrress pages), and can be used in alloc_pages; if this bit=0: if the Page is the the head page of a free memory block, then this Page and the memory block is alloced. Or this Page isn't the head page.
+
+#define SetPageReserved(page)       set_bit(PG_reserved, &((page)->flags))
+#define ClearPageReserved(page)     clear_bit(PG_reserved, &((page)->flags))
+#define PageReserved(page)          test_bit(PG_reserved, &((page)->flags))
+#define SetPageProperty(page)       set_bit(PG_property, &((page)->flags))
+#define ClearPageProperty(page)     clear_bit(PG_property, &((page)->flags))
+#define PageProperty(page)          test_bit(PG_property, &((page)->flags))
+```
+
+```c
+/* free_area_t - maintains a doubly linked list to record free (unused) pages */
+typedef struct {
+    list_entry_t free_list;         // the list header(@ with a forward ptr & a backward ptr)
+    unsigned int nr_free;           // # of free pages in this free list
+} free_area_t;
+```
+
+list.h：
+
+```c
+struct list_entry {
+    struct list_entry *prev, *next;
+};
+/*list_entry_t是双链表结点的两个指针构成的集合，这个空闲块链表实际上是将各个块首页的指针集合（由prev和next构成）的指针（或者说指针集合所在地址）相连*/
+typedef struct list_entry list_entry_t;
+```
+
+练习一共需实现四个函数：
+
+- default_init：初始化物理内存管理器；
+- default_init_memmap：初始化空闲页；
+- default_alloc_pages：申请分配指定数量的物理页；
+- default_free_pages: 申请释放若干指定物理页；
+
+直接修改default_pmm.c中的内存管理函数来实现。
+
+**default_init：**
+
+```c
+free_area_t free_area; /*allocate blank memory for the doublely linked list*/
+
+#define free_list (free_area.free_list)
+#define nr_free (free_area.nr_free)
+
+static void
+default_init(void) {
+    list_init(&free_list);
+    nr_free = 0;
+}
+```
+
+初始化双向链表，将空闲页总数nr_free初始化为0。
+
+**default_init_memmap：**
+
+初始化一整个空闲物理内存块，将块内每一页对应的Page结构初始化，参数为基址和页数（因为相邻编号的页对应的Page结构在内存上是相邻的，所以可将第一个空闲物理页对应的Page结构地址作为基址，以基址+偏移量的方式访问所有空闲物理页的Page结构，**根据指导书，这个空闲块链表正是将各个块首页的指针集合（由prev和next构成）的指针（或者说指针集合所在地址）相连，并以基址区分不同的连续内存物理块**）。
+
+根据注释，**具体流程为**：遍历块内所有空闲物理页的Page结构，将各个flags置为0以标记物理页帧有效，将property成员置零，使用 SetPageProperty宏置PG_Property标志位来标记各个页有效（具体而言，如果一页的该位为1，则对应页应是一个空闲块的块首页；若为0，则对应页要么是一个已分配块的块首页，要么不是块中首页；另一个标志位PG_Reserved在pmm_init函数里已被置位，这里用于确认对应页不是被OS内核占用的保留页，因而可用于用户程序的分配和回收），清空各物理页的引用计数ref；最后再将首页Page结构的property置为块内总页数，将全局总页数nr_free加上块内总页数，并用page_link这个双链表结点指针集合将块首页连接到空闲块链表里。
+
+写出代码如下：
+
+```c
+static void 
+default_init_memmap(struct Page *base, size_t n) {   
+    assert(n > 0);
+    struct Page *p = base;//块基址
+    for (; p != base + n; p ++)
+    {
+        assert(PageReserved(p));//确认本页不是给OS的保留页
+        p->flags = p->property = 0;
+        SetPageProperty(p);//设置标志位
+        set_page_ref(p, 0);//清空引用
+    }
+    nr_free += n;//增加全局总页数
+    base->property=n;//本块首页的property设为n
+    list_add_before(&free_list, &(base->page_link));//首页的指针集合插入空闲页链表
+}
+```
+
+**default_alloc_pages(size_t n)：**
+
+该函数分配指定页数的连续空闲物理内存空间，返回分配的空间中第一页的Page结构的指针。
+
+流程：从起始位置开始顺序搜索空闲块链表，找到第一个页数不小于所申请页数n的块（只需检查每个Page的property成员，在其值>=n的第一个页停下），如果这个块的页数正好等于申请的页数，则可直接分配；如果块页数比申请的页数多，要将块分成两半，将起始地址较低的一半分配出去，将起始地址较高的一半作为链表内新的块，分配完成后重新计算块内空闲页数和全局空闲页数；若遍历整个空闲链表仍找不到足够大的块，则返回NULL表示分配失败。
+
+```c
+static struct Page *
+default_alloc_pages(size_t n) {
+    assert(n>0);
+    if(n>nr_free) return NULL;//如果所有空闲页的总数都不够，直接返回NULL
+    struct Page *page = NULL;
+	list_entry_t *le = &free_list;
+	while ((le = list_next(le)) != &free_list) {
+   		struct Page *p = le2page(le, page_link);//链表内地址转换为Page结构指针
+    	if (p->property >= n) {//遇到第一个页数不小于n的块
+        	page = p;//可得块首页
+        	break;
+    	}
+	}
+    if (page != NULL) { //如果找到了满足条件的空闲内存块
+    	for (struct Page *p = page; p != (page + n); ++p)
+        	ClearPageProperty(p); //将分配出去的内存页标记为非空闲
+    	if (page->property > n) { /*如果原先找到的空闲块大小大于需要的分配内存大小，进行分裂*/		  struct Page *p = page + n; //分裂出来的新的小空闲块首页
+        	p->property = page->property - n; //更新新的空闲块的大小信息
+        	list_add(&(page->page_link), &(p->page_link)); /*将新空闲块插入空闲块列表中*/	}
+    list_del(&(page->page_link)); //从链表里删除分配出去的空闲块
+    nr_free -= n; //更新全局空闲页数
+	}
+    return page;
+}
+```
+
+**default_free_pages(struct Page *base, size_t n)：**
+
+释放从指定的某一物理页开始的若干个被占用的连续物理页，将这些页连回空闲块链表，重置其中的标志信息，最后进行一些碎片整理性质的块合并操作。
+
+首先根据参数提供的块基址，遍历链表找到待插入位置，插入这些页。然后将引用计数ref、flags标志位置位，最后**调用merge_blocks函数迭代地进行块合并，以获取尽可能大的连续内存块**。规则是从新插入的块开始，首先正序遍历链表，不断将链表内基址与新插入块物理地址较大一端相邻的空闲块合并到新插入块里（也是对应着分配内存块时将物理基址较大的块留在链表里）；然后反序遍历链表，不断将链表内的基址与新插入块物理地址较小一端相邻的空闲块合并到新插入块里。
+
+代码实现如下：
+
+```c
+static void
+default_free_pages(struct Page *base, size_t n) {
+    assert(n > 0);
+    struct Page *p = base;
+    for (; p != base + n; p ++) {
+        assert(!PageReserved(p) && !PageProperty(p));/*确认各个页状态是被OS占用的或是已分配的，如果释放了空闲的内存则产生异常*/
+        p->flags = 0;
+        SetPageProperty(p);//PG_Property重置为空闲状态
+        set_page_ref(p, 0);
+    }//先对块内各页进行标志信息重置
+    //块首页的成员property重新赋值为n
+    base->property = n;
+
+    list_entry_t *le = list_next(&free_list);//以链表头部的下一个为起始结点，开始顺序搜索
+    while (le != &free_list && le < &base->page_link) {
+        le = list_next(le);
+    }
+    list_add_before(&free_list, &(base->page_link));
+    nr_free += n;
+    while (merge_block(base)); /*块合并*/
+	for (list_entry_t *i = list_prev(&(base->page_link)); i!= &free_list; i = list_prev(i)) { //再将新插入的空闲块和其物理地址小的一段的所有相邻的物理空闲块进行合并
+    if (!merge_block(le2page(i, page_link))) break;
+}
+}
+
+static unsigned int
+merge_block(struct Page *base){
+    list_entry_t *le = list_next(&(base->page_link)); //获取链表中下一空闲块的地址
+    if (le == &free_list) return 0; /*如果当前空闲块是物理地址最大的空闲块，则无法进行向后合并，返回合并失败*/
+    struct Page *p = le2page(le, page_link);
+    if (PageProperty(p) == 0) return 0;//异常情况
+    if (base + base->property != p) return 0; //如果两空闲块不相邻，合并终止
+    
+    //合并操作
+    base->property += p->property;
+    p->property = 0;
+    //将合并前的物理地址较大的空闲块从链表中删去
+    list_del(le); 
+    return 1; //返回合并成功
+}
+```
+
 
 
 ## 练习2：实现寻找虚拟地址对应的页表项(需要编程)
