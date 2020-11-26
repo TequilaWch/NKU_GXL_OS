@@ -30,7 +30,134 @@
 >   - 在ucore中如何判断具有这样特征的页？
 >   - 何时进行换入和换出操作？
 
+##### 关于代码
 
+页面替换的过程可以分为页面换入和页面换出两个部分。页面换入部分在vmm.c中，承接在上一部分练习中完成的代码，而页面换出部分在swap_fifo.c中。
+
+先来看页面换入的实现。
+
+首先我们要先新分配一个物理页空间，保存通过 swap_in函数换出的磁盘中的数据，如果swap_in失败则报错返回。之后我们需要用page_insert这个函数将新申请的物理页面映射到线性地址上。最后因为我们是FIFO算法，把最近到达的页面排在队尾。而把页面排在队尾的功能在_fifo_map_swappable中。
+
+因此可以编写代码如下
+
+```c
+/* vmm.c */
+int
+do_pgfault(struct mm_struct *mm, uint32_t error_code, uintptr_t addr) {
+    int ret = -E_INVAL;
+    struct vma_struct *vma = find_vma(mm, addr);
+
+    pgfault_num++;
+    if (vma == NULL || vma->vm_start > addr) {
+        cprintf("not valid addr %x, and  can not find it in vma\n", addr);
+        goto failed;
+    }
+    switch (error_code & 3) {
+    default:     
+    case 2: 
+        if (!(vma->vm_flags & VM_WRITE)) {
+            cprintf("do_pgfault failed: error code flag = write AND not present, but the addr's vma cannot write\n");
+            goto failed;
+        }
+        break;
+    case 1: 
+        cprintf("do_pgfault failed: error code flag = read AND present\n");
+        goto failed;
+    case 0: 
+        if (!(vma->vm_flags & (VM_READ | VM_EXEC))) {
+            cprintf("do_pgfault failed: error code flag = read AND not present, but the addr's vma cannot read or exec\n");
+            goto failed;
+        }
+    }
+    uint32_t perm = PTE_U;
+    if (vma->vm_flags & VM_WRITE) {
+        perm |= PTE_W;
+    }
+    addr = ROUNDDOWN(addr, PGSIZE);
+    ret = -E_NO_MEM;
+    pte_t *ptep=NULL;
+    ptep = get_pte(mm->pgdir,addr,1);              
+    if (*ptep == 0) 
+    {
+        if(pgdir_alloc_page(mm->pgdir,addr,perm) == NULL)
+        {
+            cprintf("Error:pgdir_alloc_page\n");
+            goto failed;
+        }                   
+
+    }
+    else 
+    {
+        if(swap_init_ok) 
+        {
+            struct Page *page=NULL;
+            if((ret = swap_in(mm,addr,&page))!=0)
+            {
+                 cprintf("Error:swap_in\n");
+                goto failed;
+            }
+            else
+            {
+                page_insert(mm->pgdir,page,addr,perm);
+                swap_map_swappable(mm,addr,page,1);
+                page->pra_vaddr = addr;
+            }                            
+        }
+        else 
+        {
+            cprintf("no swap_init_ok but ptep is %x, failed\n",*ptep);
+            goto failed;
+        }
+   }
+   ret = 0;
+failed:
+    return ret;
+}
+
+/* swap_fifo.c */
+static int
+_fifo_map_swappable(struct mm_struct *mm, uintptr_t addr, struct Page *page, int swap_in)
+{
+    list_entry_t *head=(list_entry_t*) mm->sm_priv;
+    list_entry_t *entry=&(page->pra_page_link);
+    assert(entry != NULL && head != NULL);
+    //record the page access situlation
+    /*LAB3 EXERCISE 2: YOUR CODE*/ 
+    //(1)link the most recent arrival page at the back of the pra_list_head qeueue.
+    list_add(head, entry);
+    return 0;
+}
+```
+
+既然有了IN，那肯定需要有OUT，OUT的功能主要在_fifo_swap_out_victim中实现。首先我们要找到需要被换出的页，并用一个指针le指示这个需要被换出的页。再用le2page找到对应的page，最后删除这个le指向的页并用之前找到的page替换参数中的ptr_page
+
+代码实现如下
+
+```c
+static int
+_fifo_swap_out_victim(struct mm_struct *mm, struct Page ** ptr_page, int in_tick)
+{
+     list_entry_t *head=(list_entry_t*) mm->sm_priv;
+         assert(head != NULL);
+     assert(in_tick==0);
+     /* Select the victim */
+     /*LAB3 EXERCISE 2: YOUR CODE*/ 
+     //(1)  unlink the  earliest arrival page in front of pra_list_head qeueue
+     //(2)  assign the value of *ptr_page to the addr of this page
+     /* Select the tail */
+     list_entry_t *le = head->prev;
+     assert(head!=le);
+     struct Page *p = le2page(le, pra_page_link);
+     list_del(le);
+     assert(p !=NULL);
+     *ptr_page = p;
+     return 0;
+}
+```
+
+##### 关于问题
+
+不会
 
 
 ## Challenge1：实现识别dirty bit的 extended clock页替 换算法（需要编程）
