@@ -409,6 +409,7 @@ while(1)
 
 swap.c中对有效虚地址范围进行了限制，为0-0x1000，且ucore中虚地址是直接映射到物理地址的：
 
+
 ![2.jpg](https://i.loli.net/2020/11/30/Otw18eTVoZq9p6G.png)
 
 ```c
@@ -455,8 +456,4 @@ _extd_clk_check_swap(void) {
 }
 
 ```
-
-
-
-
 
