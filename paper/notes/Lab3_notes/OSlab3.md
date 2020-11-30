@@ -309,10 +309,154 @@ _fifo_swap_out_victim(struct mm_struct *mm, struct Page ** ptr_page, int in_tick
 
 ## Challenge1：实现识别dirty bit的 extended clock页替 换算法（需要编程）
 
-> 部分不是必做部分，不过在正确最后会酌情加分。需写出有详细的设计、分析和测 试的实验报告。完成出色的可获得适当加分。
->
-> 没有任何有效的信息
->
-> 如果非要说的话，应该是这个：**不是必做部分**
+添加swap_extd_clk.c，其中包含如下结构体和函数：
+
+```c
+struct swap_manager swap_manager_extended_clock =
+{
+ .name            = "extended clock swap manager",
+ .init            = &_extd_clk_init,
+ .init_mm         = &_extd_clk_init_mm,
+ .tick_event      = &_extd_clk_tick_event,
+ .map_swappable   = &_extd_clk_map_swappable,
+ .set_unswappable = &_extd_clk_set_unswappable,
+ .swap_out_victim = &_extd_clk_swap_out_victim,
+ .check_swap      = &_extd_clk_check_swap,
+};
+```
+
+仿照swap_fifo.c，逐个实现该结构体中的函数：
+
+```c
+static int
+_extd_clk_init(void)
+{
+    return 0;
+}
+
+list_entry_t pra_list_head;
+
+static int
+_extd_clk_init_mm(struct mm_struct *mm)
+{     
+     list_init(&pra_list_head);
+     mm->sm_priv = &pra_list_head;
+     //cprintf(" mm->sm_priv %x in _extd_clk_init_mm\n",mm->sm_priv);
+     return 0;
+}
+
+static int
+_extd_clk_tick_event(struct mm_struct *mm)
+{ return 0; }
+
+static int
+_extd_clk_map_swappable(struct mm_struct *mm, uintptr_t addr, struct Page *page, int swap_in)
+{
+    //换入页的在链表中的位置并不影响，因此将其插入到链表最末端。
+    list_entry_t *head=(list_entry_t*) mm->sm_priv;
+    list_entry_t *entry=&(page->pra_page_link);
+
+    assert(entry != NULL && head != NULL);// 将新页插入到链表最后
+    list_add(head -> prev, entry);//新页dirty bit标记为0.
+    struct Page *ptr = le2page(entry, pra_page_link);
+    pte_t *pte = get_pte(mm -> pgdir, ptr -> pra_vaddr, 0);
+    *pte &= ~PTE_D;
+    return 0;
+}
+
+static int
+_extd_clk_set_unswappable(struct mm_struct *mm, uintptr_t addr)
+{
+    return 0;
+}
+```
+
+```c
+static int _extd_clk_swap_out_victim(struct mm_struct*mm,struct Page **ptr_page,int in_tick)
+{
+//检查存储同一页表中虚拟内存块首页指针的循环链表；从表头开始
+list_entry_t*head=(list_entry_t*)mm->sm_priv;
+assert(head!=NULL);
+assert(in_tick==0);
+    
+list_entry_t *p=list_next(head);
+assert(p!=head);
+//遍历链表，将最近未被访问且未被修改的页换出
+while(1)
+{
+    //获取当前页的page结构
+    struct Page *ptr=le2page(p,pra_page_link);
+    //获取当前页对应二级页表项地址（用指针访问页表项）；二级页表项存储的是各个页的物理内存地址
+    pte_t *pte=get_pte(mm->pgdir,p->pra_vaddr,0);
+    //如果该页dirty bit为0，可换出该页
+    if(!(*pte&PTE_D))
+    {
+        //将页面从链表中删除
+        list_del(p);
+        assert(p!=NULL);
+        /*将该页对应的page结构放到形参ptr_page指向的某处内存地址（在本函数栈帧以外，因而函数返回后这个值理论上可完好保留）*/
+        *ptr_page=ptr;
+        return 0;
+    }
+    //如果dirty bit为1 ，将该页此位改为0，继续扫描
+    else{
+        *pte &= ~PTE_D;
+    }
+    p = list_next(p);
+}
+}
+```
+
+swap.c中对有效虚地址范围进行了限制，为0-0x1000，且ucore中虚地址是直接映射到物理地址的：
+
+![2.jpg](https://i.loli.net/2020/11/30/Otw18eTVoZq9p6G.png))
+
+```c
+static int
+_extd_clk_check_swap(void) {
+    cprintf("write Virt Page c in extd_clk_check_swap\n");
+    *(unsigned char *)0x3000 = 0x0c;
+    assert(pgfault_num==4);
+    cprintf("write Virt Page a in extd_clk_check_swap\n");
+    *(unsigned char *)0x1000 = 0x0a;
+    assert(pgfault_num==4);
+    cprintf("write Virt Page d in extd_clk_check_swap\n");
+    *(unsigned char *)0x4000 = 0x0d;
+    assert(pgfault_num==4);
+    cprintf("write Virt Page b in extd_clk_check_swap\n");
+    *(unsigned char *)0x2000 = 0x0b;
+    assert(pgfault_num==4);
+    cprintf("write Virt Page e in extd_clk_check_swap\n");
+    *(unsigned char *)0x5000 = 0x0e;
+    assert(pgfault_num==5);
+    cprintf("write Virt Page b in extd_clk_check_swap\n");
+    *(unsigned char *)0x2000 = 0x0b;
+    assert(pgfault_num==5);
+    cprintf("write Virt Page a in extd_clk_check_swap\n");
+    *(unsigned char *)0x1000 = 0x0a;
+    assert(pgfault_num==6);
+    cprintf("write Virt Page b in extd_clk_check_swap\n");
+    *(unsigned char *)0x2000 = 0x0b;
+    assert(pgfault_num==7);
+    cprintf("write Virt Page c in extd_clk_check_swap\n");
+    *(unsigned char *)0x3000 = 0x0c;
+    assert(pgfault_num==8);
+    cprintf("write Virt Page d in extd_clk_check_swap\n");
+    *(unsigned char *)0x4000 = 0x0d;
+    assert(pgfault_num==9);
+    cprintf("write Virt Page e in extd_clk_check_swap\n");
+    *(unsigned char *)0x5000 = 0x0e;
+    assert(pgfault_num==10);
+    cprintf("write Virt Page a in extd_clk_check_swap\n");
+    assert(*(unsigned char *)0x1000 == 0x0a);
+    *(unsigned char *)0x1000 = 0x0a;
+    assert(pgfault_num==11);
+    return 0;
+}
+
+```
+
+
+
 
 
