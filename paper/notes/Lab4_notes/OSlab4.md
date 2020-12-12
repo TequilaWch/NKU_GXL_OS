@@ -1,4 +1,4 @@
-# OSlab5--by：於一帆，林正青，吴昌昊
+# OSlab4--by：於一帆，林正青，吴昌昊
 
 实验2/3完成了物理和虚拟内存管理，这给创建内核线程（内核线程是一种特殊的进程）打下了提供内存管理的基础。当一个程序加载到内存中运行时，首先通过ucore OS的内存管理子系统分配合适的空间，然后就需要考虑如何分时使用CPU来“并发”执行多个程序，让每个运行的程序（这里用线程或进程表示）“感到”它们各自拥有“自己”的CPU。 
 
@@ -43,6 +43,97 @@
 > 完成代码编写后，编译并运行代码：make qemu 
 >
 > 如果可以得到如 附录A所示的显示内容（仅供参考，不是标准答案输出），则基本正确。
+
+#### 1. proc_run:
+
+proc_run 用于使一个线程在 CPU 中运行
+
+```c
+void
+proc_run(struct proc_struct *proc) {
+    // 首先判断要切换到的进程是不是当前进程，若是则不需进行任何处理。
+    // 调用local_intr_save和local_intr_restore函数去使能中断，避免在进程切换过程中出现中断。
+    if (proc != current) {
+        bool intr_flag;
+        struct proc_struct *prev = current, *next = proc;
+        local_intr_save(intr_flag);
+        {
+            // 将当前进程设为传入的进程
+            current = proc;    
+            // 修改 esp 指针的值
+            // 设置任务状态段tss中的特权级0下的esp0指针为next内核线程的内核栈的栈顶
+            load_esp0(next->kstack + KSTACKSIZE);
+            // 修改页表项
+            // 重新加载 cr3 寄存器(页目录表基址) 进行进程间的页表切换
+            lcr3(next->cr3);
+            // 使用 switch_to 进行上下文切换。
+            switch_to(&(prev->context), &(next->context));
+        }
+        local_intr_restore(intr_flag);
+    }
+}
+```
+
+#### 2. switch_to:
+
+首先把当前寄存器的值送到原线程的 context 中保存，再将新线程的 context 赋予各寄存器。
+
+```assembly
+switch_to:                      # switch_to(from, to)
+
+    # save from's registers
+    movl 4(%esp), %eax          # eax points to from
+    popl 0(%eax)                # save eip !popl
+    movl %esp, 4(%eax)
+    movl %ebx, 8(%eax)
+    movl %ecx, 12(%eax)
+    movl %edx, 16(%eax)
+    movl %esi, 20(%eax)
+    movl %edi, 24(%eax)
+    movl %ebp, 28(%eax)
+
+    # restore to's registers
+    movl 4(%esp), %eax          # not 8(%esp): popped return address already
+                                # eax now points to to
+    movl 28(%eax), %ebp
+    movl 24(%eax), %edi
+    movl 20(%eax), %esi
+    movl 16(%eax), %edx
+    movl 12(%eax), %ecx
+    movl 8(%eax), %ebx
+    movl 4(%eax), %esp
+
+    pushl 0(%eax)               # push eip
+
+    ret
+```
+
+#### Q&A：
+
+##### **Q1：在本实验的执行过程中，创建且运行了几个内核线程？**
+
+有两个内核线程:
+**1） 创建第0个内核线程idleproc**。在 init.c::kern_init 函数调用了 proc.c::proc_init 函数。 proc_init 函数启动了创建内核线程的步骤。首先当前的执行上下文（从 kern_init 启动至今）就可以看成是 uCore 内核（也可看做是内核进程）中的一个内核线程的上下文。为此，uCore 通过给当前执行的上下文分配一个进程控制块以及对它进行相应初始化，将其打造成第 0 个内核线程 – idleproc。
+
+**2） 创建第 1 个内核线程 initproc**。第 0 个内核线程主要工作是完成内核中各个子系统的初始化，然后就通过执行 cpu_idle 函数开始过退休生活了。所以 uCore 接下来还需创建其他进程来完成各种工作，但 idleproc 内核子线程自己不想做，于是就通过调用 kernel_thread 函数创建了一个内核线程 init_main。在Lab4中，这个子内核线程的工作就是输出一些字符串，然后就返回了（参看 init_main 函数）。但在后续的实验中，init_main 的工作就是创建特定的其他内核线程或用户进程。
+
+```C
+// init_main - the second kernel thread used to create user_main kernel threads
+static int
+init_main(void *arg) {
+    cprintf("this initproc, pid = %d, name = \"%s\"\n", current->pid, get_proc_name(current));
+    cprintf("To U: \"%s\".\n", (const char *)arg);
+    cprintf("To U: \"en.., Bye, Bye. :)\"\n");
+    return 0;
+}
+```
+
+##### **Q2：语句 local_intr_save(intr_flag); …local_intr_restore(intr_flag); 在这里有何作用?请说明理由。**
+
+关闭中断和打开中断。
+
+这两个函数实现的意义就是**避免在进程切换过程中处理中断**。因为有些过程是互斥的，只允许一个线程进入，因此需要关闭中断来处理临界区；如果此时在切换过程中又一次中断的话，那么该进程保存的值就很可能出bug并且丢失难寻回了。
+
 
 ## Challenge：实现支持任意大小的内存分配算法
 
