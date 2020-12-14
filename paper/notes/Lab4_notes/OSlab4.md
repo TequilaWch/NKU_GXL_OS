@@ -34,6 +34,91 @@
 >
 > 请说明ucore是否做到给每个新fork的线程一个唯一的id？请说明你的分析和理由
 
+根据注释中的步骤我们可以很容易编写如下的代码
+
+~~~c
+do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf) {
+    int ret = -E_NO_FREE_PROC;
+    struct proc_struct *proc;
+    if (nr_process >= MAX_PROCESS) {
+        goto fork_out;
+    }
+    ret = -E_NO_MEM;
+	//上面的是原有部分，上面的代码尝试新建一个进程，如果进程数大于等于MAX_PROCESS则失败
+    //下面的是新增部分
+    if((proc = alloc_proc()) == NULL)goto fork_out;//尝试分配内存，失败就退出
+    proc->parent = current;//把此进程的父进程设置为current
+    if(setup_kstack(proc)==-E_NO_MEM)goto bad_fork_cleanup_proc;//尝试分配内核栈
+    if(copy_mm(clone_flags,proc)!= 0)goto bad_fork_cleanup_kstack;//尝试复制父进程内存
+    copy_thread(proc,stack,tf);//复制中断帧和上下文
+    bool flag;
+    local_intr_save(flag);//屏蔽中断
+    proc->pid=get_pid();//获取PID
+    hash_proc(proc);//建立hash映射
+    list_add_after(&proc_list,&(proc->list_link));//添加进链表
+    /*用list_add_before或者list_add也完全ok*/
+    nr_process++;//进程数++
+    local_intr_restore(flag);//恢复中断
+    wakeup_proc(proc);//唤醒进程
+    return proc->pid;//返回PID
+
+fork_out:
+    return ret;
+bad_fork_cleanup_kstack:
+    put_kstack(proc);
+bad_fork_cleanup_proc:
+    kfree(proc);
+    goto fork_out;
+}
+~~~
+
+请说明ucore是否做到给每个新fork的线程一个唯一的id？请说明你的分析和理由
+
+对于这个问题，分配ID的代码是get_pid()，其内容如下
+
+~~~c
+static int
+get_pid(void) {
+    static_assert(MAX_PID > MAX_PROCESS);
+    struct proc_struct *proc;
+    list_entry_t *list = &proc_list, *le;
+    static int next_safe = MAX_PID, last_pid = MAX_PID;
+    if (++ last_pid >= MAX_PID) {
+        last_pid = 1;//当第一次调用时lastpid=1
+        goto inside;
+    }
+    if (last_pid >= next_safe) {
+    inside:
+        next_safe = MAX_PID;
+    repeat:
+        le = list;
+        while ((le = list_next(le)) != list) 
+        {
+            proc = le2proc(le, list_link);
+            if (proc->pid == last_pid) 
+            {//如果当前进程pid等于lastpid，lastpid++
+                if (++ last_pid >= next_safe) 
+                {//如果lastpid大于nextsafe
+                    if (last_pid >= MAX_PID)
+                    {//如果lastpid大于MAX_PID,lastpid=1
+                        last_pid = 1;
+                    }
+                    next_safe = MAX_PID;//把next_safe设置为MAXPID，跳回repeat
+                    goto repeat;
+                }
+            }
+            else if (proc->pid > last_pid && next_safe > proc->pid) 
+            {//如果proc->pid在lastpid到safe之间，就把safe设置为proc->pid
+                next_safe = proc->pid;
+            }
+        }
+    }
+    return last_pid;
+}
+~~~
+
+这段代码会不断的在链表中遍历，直到找到一个合适的last_pid才会返回，这个last_pid满足两个条件(1)不大于MAX_PID(2)未被分配过，因此ucore为每个新fork的线程分配了一个唯一的id。
+
 ## 练习3：阅读代码，理解 proc_run 函数和它调用的函数如何完成 进程切换的。（无编码工作）
 
 > 请在实验报告中简要说明你对proc_run函数的分析。并回答如下问题： 
