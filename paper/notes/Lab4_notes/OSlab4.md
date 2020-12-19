@@ -20,6 +20,66 @@
 >
 > 请说明proc_struct中struct context context 和 struct trapframe *tf 成员变量含义和在本实验中的作用是啥？
 
+实现内核线程的第一步是给线程创建进程（ucore中的线程相当于一个不拥有资源的轻量级进程）控制块。
+
+在kern/process/proc.c的alloc_proc函数中，给要创建的进程控制块指针（struct proc_struct *proc）分配了内存空间，设置如下变量：
+
+```c
+ 	/*		 enum proc_state state;                      // Process state
+     *       int pid;                                    // Process ID
+     *       int runs;                                   // the running times of Process
+     *       uintptr_t kstack;                           // Process kernel stack
+     *       volatile bool need_resched;                 // bool value: need to be rescheduled to release CPU?
+     *       struct proc_struct *parent;                 // the parent process
+     *       struct mm_struct *mm;                       // Process's memory management field
+     *       struct context context;                     // Switch here to run process
+     *       struct trapframe *tf;                       // Trap frame for current interrupt
+     *       uintptr_t cr3;                              // CR3 register: the base addr of Page Directroy Table(PDT)
+     *       uint32_t flags;                             // Process flag
+     *       char name[PROC_NAME_LEN + 1];               // Process name
+     */
+```
+
+各个变量的详细解释如下：
+
+- state：进程状态，proc.h中定义了四种状态：创建（UNINIT）、睡眠（SLEEPING）、就绪（RUNNABLE）、退出（ZOMBIE，等待父进程回收其资源）
+- pid：进程ID，调用本函数时尚未指定，默认值设为-1
+- runs：线程运行总数，默认值0
+- need_resched：标志位，表示该进程是否需要重新参与调度以释放CPU，初值0（false，表示不需要）
+- parent：父进程控制块指针，初值NULL
+- mm：用户进程虚拟内存管理单元指针，由于系统进程没有虚存，其值为NULL
+- context：进程上下文，默认值全零
+- tf：中断帧指针，默认值NULL
+- cr3：该进程页目录表的基址寄存器，初值为ucore启动时建立好的内核虚拟空间的页目录表首地址boot_cr3（在kern/mm/pmm.c的pmm_init函数中初始化）
+- flags：进程标志位，默认值0
+- name：进程名数组
+
+可以写出初始化代码：
+
+```c
+proc->state = PROC_UNINIT;
+proc->pid = -1;
+proc->runs = 0;
+proc->kstack = 0;
+proc->need_resched = 0;
+proc->parent = NULL;
+proc->mm = NULL;
+memset(&(proc->context), 0, sizeof(struct context));
+proc->tf = NULL;
+proc->cr3 = boot_cr3;
+proc->flags = 0;
+memset(proc->name, 0, PROC_NAME_LEN);
+```
+
+#### 回答问题
+
+> 请说明proc_struct中 struct context context 和 struct trapframe *tf 成员变量含义和在
+> 本实验中的作用是啥？
+
+context指进程上下文，这部分空间用于保存创建进程时父进程的部分寄存器值：eip, esp, ebx, ecx, edx, esi, edi, ebp；其他寄存器在切换进程时值不变，故不需要保存。
+
+tf是中断帧的指针，总是指向内核栈的某个位置：当进程从用户空间跳到内核空间时，中断帧记录了进程在被中断前的状态。当内核需要跳回用户空间时，需要调整中断帧以恢复让进程继续执行的各寄存器值。
+
 ## 练习2：为新创建的内核线程分配资源（需要编程）
 
 > 创建一个内核线程需要分配和设置好很多资源。kernel_thread函数通过调用do_fork函数完成 具体内核线程的创建工作。do_kernel函数会调用alloc_proc函数来分配并初始化一个进程控制块，但alloc_proc只是找到了一小块内存用以记录进程的必要信息，并没有实际分配这些资 源。ucore一般通过do_fork实际创建新的内核线程。do_fork的作用是，创建当前内核线程的 一个副本，它们的执行上下文、代码、数据都一样，但是存储位置不同。在这个过程中，需要给新内核线程分配资源，并且复制原进程的状态。你需要完成在kern/process/proc.c中的 do_fork函数中的处理过程。它的大致执行步骤包括：
