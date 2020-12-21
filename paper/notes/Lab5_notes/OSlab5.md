@@ -5,6 +5,163 @@
 
 
 ## 练习0：经典合并代码
+##### 代码补充部分
+
+```C++
+proc.c
+default_pmm.c
+pmm.c
+swap_fifo.c
+vmm.c
+trap.c
+```
+
+##### 1. alloc_proc函数
+
+```C++
+static struct proc_struct *
+alloc_proc(void) {
+ struct proc_struct *proc = kmalloc(sizeof(struct proc_struct));
+    if (proc != NULL) {
+        proc->state = PROC_UNINIT;
+        proc->pid = -1;
+        proc->runs = 0;
+        proc->kstack = 0;
+        proc->need_resched = 0;
+        proc->parent = NULL;
+        proc->mm = NULL;
+        memset(&(proc->context), 0, sizeof(struct context));
+        proc->tf = NULL;
+        proc->cr3 = boot_cr3;
+        proc->flags = 0;
+        memset(proc->name, 0, PROC_NAME_LEN);
+        proc->wait_state = 0; //PCB新增的条目，初始化进程等待状态
+        proc->cptr = proc->optr = proc->yptr = NULL;//设置指针
+    }
+    return proc;
+}
+```
+
+注解：
+
+```C++
+// 新增的两行
+proc->wait_state = 0; //初始化进程等待状态
+proc->cptr = proc->optr = proc->yptr = NULL; //指针初始化
+
+// 指针注解
+process relations
+parent:           proc->parent  (proc is children)
+children:         proc->cptr    (proc is parent)
+older sibling:    proc->optr    (proc is younger sibling)
+younger sibling:  proc->yptr    (proc is older sibling)
+```
+
+##### 2. do_fork函数
+
+```C++
+int
+do_fork(uint32_t clone_flags, uintptr_t stack, struct trapframe *tf) {
+    int ret = -E_NO_FREE_PROC;
+    struct proc_struct *proc;
+    if (nr_process >= MAX_PROCESS) {
+        goto fork_out;
+    }
+    ret = -E_NO_MEM;
+    if ((proc = alloc_proc()) == NULL) {
+        goto fork_out;
+    }
+    proc->parent = current;
+    assert(current->wait_state == 0); //确保进程在等待
+    if (setup_kstack(proc) != 0) {
+        goto bad_fork_cleanup_proc;
+    }
+    if (copy_mm(clone_flags, proc) != 0) {
+        goto bad_fork_cleanup_kstack;
+    }
+    copy_thread(proc, stack, tf);
+    bool intr_flag;
+    local_intr_save(intr_flag);
+    {
+        proc->pid = get_pid();
+        hash_proc(proc);
+        set_links(proc); //设置进程链接
+    }
+    local_intr_restore(intr_flag);
+    wakeup_proc(proc);
+    ret = proc->pid;
+fork_out:
+    return ret;
+bad_fork_cleanup_kstack:
+    put_kstack(proc);
+bad_fork_cleanup_proc:
+    kfree(proc);
+    goto fork_out;
+}
+```
+
+注解:
+
+```C++
+// 新增
+assert(current->wait_state == 0); //确保进程在等待
+set_links(proc); //设置进程链接
+
+// set_links函数详解
+// set_links函数的作用就是设置当前进程的process relations
+static void
+set_links(struct proc_struct *proc) {
+    list_add(&proc_list,&(proc->list_link));//进程加入进程链表
+    proc->yptr = NULL; //当前进程的younger sibling为空
+    if ((proc->optr = proc->parent->cptr) != NULL) {
+        proc->optr->yptr = proc; //当前进程的older sibling为当前进程
+    }
+    proc->parent->cptr = proc; //父进程的子进程为当前进程
+    nr_process ++; //进程数加一
+}
+```
+
+##### 3. idt_init函数
+
+```C++
+void idt_init(void) {
+    extern uintptr_t __vectors[];
+    int i;
+    for (i = 0;i<sizeof(idt)/sizeof(struct gatedesc);i ++) {
+        SETGATE(idt[i],0,GD_KTEXT,__vectors[i], DPL_KERNEL);
+    }
+    SETGATE(idt[T_SYSCALL], 1, GD_KTEXT,    __vectors[T_SYSCALL], DPL_USER);
+    lidt(&idt_pd);
+}
+```
+
+注解：
+
+```C++
+// 新增
+SETGATE(idt[T_SYSCALL], 1, GD_KTEXT, __vectors[T_SYSCALL], DPL_USER);
+// 这里主要是设置相应的中断门
+```
+
+##### 4. trap_dispatch函数
+
+```C++
+ticks ++;
+if (ticks % TICK_NUM == 0) {
+    assert(current != NULL);
+    current->need_resched = 1;
+}
+break;
+```
+
+注解：
+
+```C++
+// 新增
+current->need_resched = 1;
+```
+
+#### 
 
 ## 练习1：加载应用程序并执行（需要编码）
 
@@ -248,7 +405,107 @@ bad_mm:
 > - 请给出ucore中一个用户态进程的执行状态生命周期图（包执行状态，执行状态之间的变换关系，以及产生变换的事件或函数调用）。（字符方式画即可）
 >
 > 执行：make grade。如果所显示的应用程序检测都输出ok，则基本正确。
+##### 目前ucore的系统调用为：
+
+```C++
+SYS_exit        : process exit,                           -->do_exit
+SYS_fork        : create child process, dup mm            -->do_fork-->wakeup_proc
+SYS_wait        : wait process                            -->do_wait
+SYS_exec        : after fork, process execute a program   -->load a program and refresh the mm
+SYS_clone       : create child thread                     -->do_fork-->wakeup_proc
+SYS_yield       : process flag itself need resecheduling, -->proc->need_sched=1, then scheduler will rescheule this process
+SYS_sleep       : process sleep                           -->do_sleep 
+SYS_kill        : kill process                            -->do_kill-->proc->flags |= PF_EXITING                                         -->wakeup_proc-->do_wait-->do_exit   
+SYS_getpid      : get the process's pid
+```
+
+​        一般来说，用户进程只能执行一般的指令,无法执行特权指令。采用系统调用机制为用户进程提供一个获得操作系统服务的统一接口层，简化用户进程的实现。
+根据之前的分析，应用程序调用的 exit/fork/wait/getpid 等库函数最终都会调用 syscall 函数,只是调用的参数不同而已（分别是 SYS_exit / SYS_fork / SYS_wait / SYS_getid ）
+
+​       当应用程序调用系统函数时，一般执行INT T_SYSTEMCALL指令后，CPU 根据操作系统建立的系统调用中断描述符，转入内核态，然后开始了操作系统系统调用的执行过程，在内核函数执行之前，会保留软件执行系统调用前的执行现场，然后保存当前进程的`tf`结构体中，之后操作系统就可以开始完成具体的系统调用服务，完成服务后，调用IRET返回用户态，并恢复现场。这样整个系统调用就执行完毕了。
+
+##### 1. fork
+
+```C++
+// 调用过程：fork->SYS_fork->do_fork + wakeup_proc
+
+// wakeup_proc 函数主要是将进程的状态设置为等待。
+
+// do_fork()
+1、分配并初始化进程控制块(alloc_proc 函数);
+2、分配并初始化内核栈(setup_stack 函数);
+3、根据 clone_flag标志复制或共享进程内存管理结构(copy_mm 函数);
+4、设置进程在内核(将来也包括用户态)正常运行和调度所需的中断帧和执行上下文(copy_thread 函数);
+5、把设置好的进程控制块放入hash_list 和 proc_list 两个全局进程链表中;
+6、自此,进程已经准备好执行了,把进程状态设置为“就绪”态;
+7、设置返回码为子进程的 id 号。
+```
+
+##### 2. exec
+
+```C++
+// 调用过程： SYS_exec->do_execve
+
+1、首先为加载新的执行码做好用户态内存空间清空准备。如果mm不为NULL，则设置页表为内核空间页表，且进一步判断mm的引用计数减1后是否为0，如果为0，则表明没有进程再需要此进程所占用的内存空间，为此将根据mm中的记录，释放进程所占用户空间内存和进程页表本身所占空间。最后把当前进程的mm内存管理指针为空。
+2、接下来是加载应用程序执行码到当前进程的新创建的用户态虚拟空间中。之后就是调用load_icode从而使之准备好执行。
+```
+
+##### 3. wait
+
+```C++
+// 调用过程： SYS_wait->do_wait
+
+1、 如果 pid!=0，表示只找一个进程 id 号为 pid 的退出状态的子进程，否则找任意一个处于退出状态的子进程;
+2、 如果此子进程的执行状态不为PROC_ZOMBIE，表明此子进程还没有退出，则当前进程设置执行状态为PROC_SLEEPING（睡眠），睡眠原因为WT_CHILD(即等待子进程退出)，调用schedule()函数选择新的进程执行，自己睡眠等待，如果被唤醒，则重复跳回步骤 1 处执行;
+3、 如果此子进程的执行状态为 PROC_ZOMBIE，表明此子进程处于退出状态，需要当前进程(即子进程的父进程)完成对子进程的最终回收工作，即首先把子进程控制块从两个进程队列proc_list和hash_list中删除，并释放子进程的内核堆栈和进程控制块。自此，子进程才彻底地结束了它的执行过程，它所占用的所有资源均已释放。
+```
+
+##### 4. exit
+
+```C++
+// 调用过程： SYS_exit->exit
+
+1、先判断是否是用户进程，如果是，则开始回收此用户进程所占用的用户态虚拟内存空间;（具体的回收过程不作详细说明）
+2、设置当前进程的中hi性状态为PROC_ZOMBIE，然后设置当前进程的退出码为error_code。表明此时这个进程已经无法再被调度了，只能等待父进程来完成最后的回收工作（主要是回收该子进程的内核栈、进程控制块）
+3、如果当前父进程已经处于等待子进程的状态，即父进程的wait_state被置为WT_CHILD，则此时就可以唤醒父进程，让父进程来帮子进程完成最后的资源回收工作。
+4、如果当前进程还有子进程,则需要把这些子进程的父进程指针设置为内核线程init,且各个子进程指针需要插入到init的子进程链表中。如果某个子进程的执行状态是 PROC_ZOMBIE,则需要唤醒 init来完成对此子进程的最后回收工作。
+5、执行schedule()调度函数，选择新的进程执行。
+```
+
+##### Q&A
+
+1. 请分析fork/exec/wait/exit在实现中是如何影响进程的执行状态的？
+
+①fork：执行完毕后，如果创建新进程成功，则出现两个进程，一个是子进程，一个是父进程。在子进程中，fork函数返回0，在父进程中，fork返回新创建子进程的进程ID。我们可以通过fork返回的值来判断当前进程是子进程还是父进程
+
+②exit：会把一个退出码error_code传递给ucore，ucore通过执行内核函数do_exit来完成对当前进程的退出处理，主要工作简单地说就是回收当前进程所占的大部分内存资源，并通知父进程完成最后的回收工作。
+
+③execve：完成用户进程的创建工作。首先为加载新的执行码做好用户态内存空间清空准备。接下来的一步是加载应用程序执行码到当前进程的新创建的用户态虚拟空间中。
+
+④wait：等待任意子进程的结束通知。wait_pid函数等待进程id号为pid的子进程结束通知。这两个函数最终访问sys_wait系统调用接口让ucore来完成对子进程的最后回收工作。
+
+
+
+2. 请给出ucore中一个用户态进程的执行状态生命周期图（包执行状态，执行状态之间的变换关系，以及产生变换的事件或函数调用）。
+
+```
+      (alloc_proc)          (wakeup_proc)
+    ---------------> NEW ----------------> READY
+                                             |
+                                             |
+                                             | (proc_run)
+                                             |
+         (do_wait)            (do_exit)      V
+   EXIT <---------- ZOMBIE <-------------- RUNNING
+```
+
 
 ## Challenge：实现 Copy on Write 机制
 
 > 这个扩展练习涉及到本实验和上一个实验“虚拟内存管理”。在ucore操作系统中，当一个用户 父进程创建自己的子进程时，父进程会把其申请的用户空间设置为只读，子进程可共享父进 程占用的用户内存空间中的页面（这就是一个共享的资源）。当其中任何一个进程修改此用 户内存空间中的某页面时，ucore会通过page fault异常获知该操作，并完成拷贝内存页面，使 得两个进程都有各自的内存页面。这样一个进程所做的修改不会被另外一个进程可见了。请 在ucore中实现这样的COW机制。
+
+如果要实现“Copy on Write机制”，可以在现有代码的基础上稍作修改。修改内容：
+
+- 在执行do_fork时，子进程的页目录表直接拷贝父进程的页目录表，而不是拷贝内核页目录表；在dup_mmap，只需保留拷贝vma链表的部分，取消调用copy_range来为子进程分配物理内存。
+- 将父进程的内存空间对应的所有Page结构的ref均加1，表示子进程也在使用这些内存
+- 将父子进程的页目录表的写权限取消，这样一旦父子进程执行写操作时，就会发生页面访问异常，进入页面访问异常处理函数中，再进行内存拷贝操作，并恢复页目录表的写权限。
