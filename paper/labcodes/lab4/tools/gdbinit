@@ -1,0 +1,7 @@
+file bin/kernel
+target remote :1234
+break kern_init
+alias ly = layout
+alias ir = info registers
+alias dy = display
+ly sp
