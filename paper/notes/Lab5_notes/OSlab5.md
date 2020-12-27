@@ -397,6 +397,38 @@ bad_mm:
 >
 > Copy-on-write（简称COW）的基本概念是指如果有多个使用者对一个资源A（比如内存块）进行读操作，则每个使用者只需获得一个指向同一个资源A的指针，就可以该资源 了。若某使用者需要对这个资源A进行写操作，系统会对该资源进行拷贝操作，从而使得 该“写操作”使用者获得一个该资源A的“私有”拷贝—资源B，可对资源B进行写操作。该“写 操作”使用者对资源B的改变对于其他的使用者而言是不可见的，因为其他使用者看到的 还是资源A。
 
+```c
+ /*		   replicate content of page to npage, build the map of phy addr of nage with the linear addr start
+         *
+         * Some Useful MACROs and DEFINEs, you can use them in below implementation.
+         * MACROs or Functions:
+         *    page2kva(struct Page *page): return the kernel vritual addr of memory which page managed (SEE pmm.h) //获取page结构的内核虚拟地址
+         *    page_insert: build the map of phy addr of an Page with the linear addr la
+         *    memcpy: typical memory copy function 
+         *
+         * (1) find src_kvaddr: the kernel virtual address of page
+         * (2) find dst_kvaddr: the kernel virtual address of npage
+         * (3) memory copy from src_kvaddr to dst_kvaddr, size is PGSIZE
+         * (4) build the map of phy addr of  nage with the linear addr start
+         */
+```
+按照提示，在循环当中，首先找到待拷贝的源地址和目的地址，然后使用memcpy函数复制一个页（每次一个页）的内容至目的地址，最后建立虚拟地址到物理地址的映射。
+
+写出代码如下：
+```c
+	void * kva_src = page2kva(page);
+        void * kva_dst = page2kva(npage);
+    
+        memcpy(kva_dst, kva_src, PGSIZE);
+
+        ret = page_insert(to, npage, start, perm);
+```
+- copy-on-write机制
+
+在父进程执行do_fork函数创建子进程时进行浅拷贝：在进行内存复制的部分，比如copy_range函数内部，不实际进行内存的复制，而是将子进程和父进程的虚拟页映射上同一个物理页面，然后在分别在这两个进程的虚拟页对应的PTE部分将这个页置成是不可写的，同时利用PTE中的保留位将这个页设置成共享的页面；
+在子进程产生page fault时进行深拷贝：额外申请分配一个物理页面，然后将当前的共享页的内容复制过去，建立出错的线性地址与新创建的物理页面的映射关系，将PTE设置设置成非共享的；然后查询原先共享的物理页面是否还是由多个其他进程共享使用的，如果不是的话，就将对应的虚地址的PTE进行修改，删掉共享标记，恢复写标记。
+
+
 ## 练习3：阅读分析源代码，理解进程执行 fork/exec/wait/exit 的实现，以及系统调用的实现（不需要编码）
 
 > 请在实验报告中简要说明你对 fork/exec/wait/exit函数的分析。并回答如下问题：
